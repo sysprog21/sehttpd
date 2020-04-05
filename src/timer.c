@@ -11,7 +11,7 @@
 
 typedef int (*prio_queue_comparator)(void *pi, void *pj);
 
-/* priority queue */
+/* priority queue with binary heap */
 typedef struct {
     void **priv;
     size_t nalloc;
@@ -103,6 +103,7 @@ static size_t sink(prio_queue_t *ptr, size_t k)
     return k;
 }
 
+/* remove the item with minimum key value from the heap */
 static bool prio_queue_delmin(prio_queue_t *ptr)
 {
     if (prio_queue_is_empty(ptr))
@@ -118,6 +119,7 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
     return true;
 }
 
+/* add a new item to the heap */
 static bool prio_queue_insert(prio_queue_t *ptr, void *item)
 {
     if (ptr->nalloc + 1 == ptr->size) {
