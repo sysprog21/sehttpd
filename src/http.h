@@ -7,24 +7,24 @@
 
 #include "list.h"
 
-enum {
+enum http_parser_retcode {
     HTTP_PARSER_INVALID_METHOD = 10,
     HTTP_PARSER_INVALID_REQUEST,
     HTTP_PARSER_INVALID_HEADER
-} http_parser_retcode;
+};
 
-enum {
+enum http_method {
     HTTP_UNKNOWN = 0x0001,
     HTTP_GET = 0x0002,
     HTTP_HEAD = 0x0004,
     HTTP_POST = 0x0008,
-} http_method;
+};
 
-enum {
+enum http_status {
     HTTP_OK = 200,
     HTTP_NOT_MODIFIED = 304,
     HTTP_NOT_FOUND = 404,
-} http_status;
+};
 
 #define MAX_BUF 8124
 
