@@ -51,6 +51,7 @@ static int http_process_if_modified_since(http_request_t *r UNUSED,
 
     time_t client_time = mktime(&tm);
     double time_diff = difftime(out->mtime, client_time);
+    /* TODO: use custom absolute value function rather without libm */
     if (fabs(time_diff) < 1e-6) { /* Not modified */
         out->modified = false;
         out->status = HTTP_NOT_MODIFIED;
