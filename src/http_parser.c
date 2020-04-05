@@ -41,6 +41,7 @@ int http_parse_request_line(http_request_t *r)
         p = (uint8_t *) &r->buf[pi % MAX_BUF];
         ch = *p;
 
+        /* TODO: use computed goto for efficient dispatching */
         switch (state) {
         /* HTTP methods: GET, HEAD, POST */
         case s_start:

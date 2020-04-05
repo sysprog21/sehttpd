@@ -62,6 +62,10 @@ static void parse_uri(char *uri, int uri_length, char *filename)
     assert(uri && "parse_uri: uri is NULL");
     uri[uri_length] = '\0';
 
+    /* TODO: support query string, i.e.
+     *       https://example.com/over/there?name=ferret
+     * Reference: https://en.wikipedia.org/wiki/Query_string
+     */
     char *question_mark = strchr(uri, '?');
     int file_length;
     if (question_mark) {
@@ -192,7 +196,7 @@ static void serve_static(int fd,
 
     int srcfd = open(filename, O_RDONLY, 0);
     assert(srcfd > 2 && "open error");
-    /* TODO: use sendfile system call */
+    /* TODO: use sendfile(2) for zero-cop support */
     char *srcaddr = mmap(NULL, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
     assert(srcaddr != (void *) -1 && "mmap error");
     close(srcfd);
@@ -313,6 +317,7 @@ void do_request(void *ptr)
 
 err:
 close:
+    /* TODO: handle the timeout raised by inactive connections */
     rc = http_close_conn(r);
     assert(rc == 0 && "do_request: http_close_conn");
 }
