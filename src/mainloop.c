@@ -104,7 +104,7 @@ int main()
     init_http_request(request, listenfd, epfd, WEBROOT);
 
     struct epoll_event event = {
-        .data.ptr = (void *) request,
+        .data.ptr = request,
         .events = EPOLLIN | EPOLLET,
     };
     epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &event);
@@ -121,7 +121,7 @@ int main()
         handle_expire_timers();
 
         for (int i = 0; i < n; i++) {
-            http_request_t *r = (http_request_t *) events[i].data.ptr;
+            http_request_t *r = events[i].data.ptr;
             int fd = r->fd;
             if (listenfd == fd) {
                 /* we hava one or more incoming connections */
@@ -149,10 +149,10 @@ int main()
                     }
 
                     init_http_request(request, infd, epfd, WEBROOT);
-                    event.data.ptr = (void *) request;
+                    event.data.ptr = request;
                     event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
-
                     epoll_ctl(epfd, EPOLL_CTL_ADD, infd, &event);
+
                     add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
                 }
             } else {

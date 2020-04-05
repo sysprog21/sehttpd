@@ -7,11 +7,11 @@ struct list_head {
 
 typedef struct list_head list_head;
 
-#define INIT_LIST_HEAD(ptr)                                \
-    do {                                                   \
-        struct list_head *_ptr = (struct list_head *) ptr; \
-        (_ptr)->next = (_ptr);                             \
-        (_ptr->prev) = (_ptr);                             \
+#define INIT_LIST_HEAD(ptr)           \
+    do {                              \
+        struct list_head *_ptr = ptr; \
+        (_ptr)->next = (_ptr);        \
+        (_ptr->prev) = (_ptr);        \
     } while (0)
 
 /* Insert a new entry to two consecutive entries */
