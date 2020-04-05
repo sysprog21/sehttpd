@@ -1,6 +1,8 @@
 #ifndef LIST_H
 #define LIST_H
 
+#include <stddef.h>
+
 struct list_head {
     struct list_head *prev, *next;
 };
@@ -51,10 +53,6 @@ static inline int list_empty(struct list_head *head)
 {
     return (head->next == head) && (head->prev == head);
 }
-
-#ifndef offsetof
-#define offsetof(TYPE, MEMBER) ((size_t) & ((TYPE *) 0)->MEMBER)
-#endif
 
 #define container_of(ptr, type, member)                      \
     ({                                                       \
