@@ -200,8 +200,8 @@ void handle_expire_timers()
 
         if (node->key > current_msec)
             return;
-        if (node->handler)
-            node->handler(node->req);
+        if (node->callback)
+            node->callback(node->request);
 
         ret = prio_queue_delmin(&timer);
         assert(ret && "handle_expire_timers: prio_queue_delmin error");
@@ -209,7 +209,7 @@ void handle_expire_timers()
     }
 }
 
-void add_timer(http_request_t *req, size_t timeout, timer_handler handler)
+void add_timer(http_request_t *req, size_t timeout, timer_callback cb)
 {
     timer_node *node = malloc(sizeof(timer_node));
     assert(node && "add_timer: malloc error");
@@ -218,8 +218,8 @@ void add_timer(http_request_t *req, size_t timeout, timer_handler handler)
     req->timer = node;
     node->key = current_msec + timeout;
     node->deleted = false;
-    node->handler = handler;
-    node->req = req;
+    node->callback = cb;
+    node->request = req;
 
     bool ret UNUSED = prio_queue_insert(&timer, node);
     assert(ret && "add_timer: prio_queue_insert error");
