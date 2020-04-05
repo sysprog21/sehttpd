@@ -13,8 +13,8 @@
 #include "logger.h"
 #include "timer.h"
 
+/* the length of the struct epoll_events array pointed to by *events */
 #define MAXEVENTS 1024
-static struct epoll_event *events;
 
 #define LISTENQ 1024
 
@@ -97,7 +97,7 @@ int main()
     int epfd = epoll_create1(0 /* flags */);
     assert(epfd > 0 && "epoll_create1");
 
-    events = malloc(sizeof(struct epoll_event) * MAXEVENTS);
+    struct epoll_event *events = malloc(sizeof(struct epoll_event) * MAXEVENTS);
     assert(events && "epoll_event: malloc");
 
     http_request_t *request = malloc(sizeof(http_request_t));
