@@ -20,7 +20,6 @@ int find_timer();
 void handle_expired_timers();
 
 void add_timer(http_request_t *req, size_t timeout, timer_callback cb);
-;
 void del_timer(http_request_t *req);
 
 #endif
