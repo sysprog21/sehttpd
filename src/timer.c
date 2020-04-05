@@ -181,19 +181,19 @@ int find_timer()
     return time;
 }
 
-void handle_expire_timers()
+void handle_expired_timers()
 {
     bool ret UNUSED;
 
     while (!prio_queue_is_empty(&timer)) {
-        debug("handle_expire_timers, size = %zu", prio_queue_size(&timer));
+        debug("handle_expired_timers, size = %zu", prio_queue_size(&timer));
         time_update();
         timer_node *node = prio_queue_min(&timer);
         assert(node && "prio_queue_min error");
 
         if (node->deleted) {
             ret = prio_queue_delmin(&timer);
-            assert(ret && "handle_expire_timers: prio_queue_delmin error");
+            assert(ret && "handle_expired_timers: prio_queue_delmin error");
             free(node);
             continue;
         }
@@ -204,7 +204,7 @@ void handle_expire_timers()
             node->callback(node->request);
 
         ret = prio_queue_delmin(&timer);
-        assert(ret && "handle_expire_timers: prio_queue_delmin error");
+        assert(ret && "handle_expired_timers: prio_queue_delmin error");
         free(node);
     }
 }

@@ -118,7 +118,7 @@ int main()
         int time = find_timer();
         debug("wait time = %d", time);
         int n = epoll_wait(epfd, events, MAXEVENTS, time);
-        handle_expire_timers();
+        handle_expired_timers();
 
         for (int i = 0; i < n; i++) {
             http_request_t *r = events[i].data.ptr;
