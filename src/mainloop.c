@@ -85,10 +85,6 @@ int main()
         return 0;
     }
 
-    /* initialize listening socket */
-    struct sockaddr_in clientaddr;
-    memset(&clientaddr, 0, sizeof(struct sockaddr_in));
-
     int listenfd = open_listenfd(PORT);
     int rc UNUSED = sock_set_non_blocking(listenfd);
     assert(rc == 0 && "sock_set_non_blocking");
@@ -125,11 +121,11 @@ int main()
             int fd = r->fd;
             if (listenfd == fd) {
                 /* we hava one or more incoming connections */
-                int infd;
                 while (1) {
                     socklen_t inlen = 1;
-                    infd = accept(listenfd, (struct sockaddr *) &clientaddr,
-                                  &inlen);
+                    struct sockaddr_in clientaddr;
+                    int infd = accept(listenfd, (struct sockaddr *) &clientaddr,
+                                      &inlen);
                     if (infd < 0) {
                         if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
                             /* we have processed all incoming connections */
