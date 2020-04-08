@@ -187,3 +187,7 @@ sem
 cond
 condvar
 sehttpd
+eBPF
+bpf
+kprobe
+jprobe
