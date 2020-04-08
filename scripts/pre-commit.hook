@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-CPPCHECK_suppresses="--suppress=missingIncludeSystem \
-                     --suppress=sprintfOverlappingData:src/http.c"
+CPPCHECK_suppresses="--suppress=missingInclude \
+                     --suppress=sprintfOverlappingData:src/http.c \
+                     --inline-suppr"
 CPPCHECK_OPTS="-I. --enable=all --error-exitcode=1 --force $CPPCHECK_suppresses ."
 
 RETURN=0
