@@ -1,6 +1,11 @@
 .PHONY: all check clean
 TARGET = sehttpd
-all: $(TARGET)
+GIT_HOOKS := .git/hooks/applied
+all: $(GIT_HOOKS) $(TARGET)
+
+$(GIT_HOOKS):
+	@scripts/install-git-hooks
+	@echo
 
 include common.mk
 
