@@ -138,7 +138,7 @@ int main()
                     rc = sock_set_non_blocking(infd);
                     assert(rc == 0 && "sock_set_non_blocking");
 
-                    http_request_t *request = malloc(sizeof(http_request_t));
+                    request = malloc(sizeof(http_request_t));
                     if (!request) {
                         log_err("malloc(sizeof(http_request_t))");
                         break;

@@ -76,14 +76,13 @@ static void parse_uri(char *uri, int uri_length, char *filename)
         debug("file_length = uri_length = %d", file_length);
     }
 
-    strcpy(filename, webroot);
-
     /* uri_length can not be too long */
     if (uri_length > (SHORTLINE >> 1)) {
         log_err("uri too long: %.*s", uri_length, uri);
         return;
     }
 
+    strcpy(filename, webroot);
     debug("before strncat, filename = %s, uri = %.*s, file_len = %d", filename,
           file_length, uri, file_length);
     strncat(filename, uri, file_length);
@@ -158,7 +157,6 @@ static void serve_static(int fd,
                          http_out_t *out)
 {
     char header[MAXLINE];
-    char buf[SHORTLINE];
 
     const char *dot_pos = strrchr(filename, '.');
     const char *file_type = get_file_type(dot_pos);
@@ -173,6 +171,7 @@ static void serve_static(int fd,
     }
 
     if (out->modified) {
+        char buf[SHORTLINE];
         sprintf(header, "%sContent-type: %s\r\n", header, file_type);
         sprintf(header, "%sContent-length: %zu\r\n", header, filesize);
         struct tm tm;
@@ -201,7 +200,7 @@ static void serve_static(int fd,
     assert(srcaddr != (void *) -1 && "mmap error");
     close(srcfd);
 
-    n = writen(fd, srcaddr, filesize);
+    writen(fd, srcaddr, filesize);
 
     munmap(srcaddr, filesize);
 }
