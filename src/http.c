@@ -195,7 +195,7 @@ static void serve_static(int fd,
 
     int srcfd = open(filename, O_RDONLY, 0);
     assert(srcfd > 2 && "open error");
-    /* TODO: use sendfile(2) for zero-cop support */
+    /* TODO: use sendfile(2) for zero-copy support */
     char *srcaddr = mmap(NULL, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
     assert(srcaddr != (void *) -1 && "mmap error");
     close(srcfd);
