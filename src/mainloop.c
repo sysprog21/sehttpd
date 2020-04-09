@@ -140,7 +140,7 @@ int main()
 
                     request = malloc(sizeof(http_request_t));
                     if (!request) {
-                        log_err("malloc(sizeof(http_request_t))");
+                        log_err("malloc");
                         break;
                     }
 
