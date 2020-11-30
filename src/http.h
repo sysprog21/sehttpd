@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <time.h>
+#include <liburing.h>
 
 #include "list.h"
 
@@ -46,6 +47,11 @@ typedef struct {
     void *cur_header_value_start, *cur_header_value_end;
 
     void *timer;
+    
+    int event_type ;
+    int iovec_count ;
+    int client_socket ;
+    struct iovec iov[];
 } http_request_t;
 
 typedef struct {
@@ -79,13 +85,15 @@ int http_close_conn(http_request_t *r);
 
 static inline void init_http_request(http_request_t *r,
                                      int fd,
-                                     int epfd,
-                                     char *root)
+                                     /*int epfd,*/
+                                     char *root,
+                                     int event_type)
 {
-    r->fd = fd, r->epfd = epfd;
+    r->fd = fd/*, r->epfd = epfd*/;
     r->pos = r->last = 0;
     r->state = 0;
     r->root = root;
+    r->event_type = event_type;
     INIT_LIST_HEAD(&(r->list));
 }
 
