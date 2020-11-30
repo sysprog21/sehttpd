@@ -8,6 +8,7 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <liburing.h>
 
 #include "http.h"
 #include "logger.h"
@@ -15,8 +16,12 @@
 
 /* the length of the struct epoll_events array pointed to by *events */
 #define MAXEVENTS 1024
-
 #define LISTENQ 1024
+#define Queue_Depth 256
+#define PORT 8081
+#define WEBROOT "./www"
+
+struct io_uring ring ;
 
 static int open_listenfd(int port)
 {
@@ -69,15 +74,47 @@ static int sock_set_non_blocking(int fd)
     return 0;
 }
 
+void add_accept_request(int sockfd)
+{
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
+    /*
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    io_uring_prep_accept(sqe, sockfd, NULL, NULL, flags) ;
+    */
+    io_uring_prep_accept(sqe, sockfd, NULL, NULL, 0);
+
+    http_request_t *request = malloc(sizeof(http_request_t));
+   
+    init_http_request(request, sockfd, WEBROOT, 0);
+    io_uring_sqe_set_data(sqe, request);
+    io_uring_submit(&ring);
+}
+
+void add_read_request(int clientfd)
+{
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
+    http_request_t *request = malloc(sizeof(http_request_t)+sizeof(struct iovec)) ;
+    init_http_request(request, clientfd, WEBROOT, 1);
+    
+    request->iov[0].iov_base = malloc(sizeof(1024));
+    request->iov[0].iov_len  = 1024;
+    
+    request->client_socket = clientfd;
+    io_uring_prep_readv(sqe, clientfd, &request->iov[0], 1, 0);
+    io_uring_sqe_set_data(sqe, request);
+    io_uring_submit(&ring); 
+}
+
+void add_write_request(int clientfd)
+{
+    return 0;
+}
+
 /* TODO: use command line options to specify */
-#define PORT 8081
-#define WEBROOT "./www"
 
 int main()
 {
-    /* when a fd is closed by remote, writing to this fd will cause system
-     * send SIGPIPE to this process, which exit the program
-     */
     if (sigaction(SIGPIPE,
                   &(struct sigaction){.sa_handler = SIG_IGN, .sa_flags = 0},
                   NULL)) {
@@ -86,84 +123,50 @@ int main()
     }
 
     int listenfd = open_listenfd(PORT);
-    int rc UNUSED = sock_set_non_blocking(listenfd);
-    assert(rc == 0 && "sock_set_non_blocking");
+    assert(listen >= 0 && "open_listenfd");
 
-    /* create epoll and add listenfd */
-    int epfd = epoll_create1(0 /* flags */);
-    assert(epfd > 0 && "epoll_create1");
+    int ret = io_uring_queue_init(Queue_Depth, &ring, 0) ;
+    struct io_uring_cqe *cqe ;
+    assert(ret >= 0 && "io_uring_queue_init") ;
 
-    struct epoll_event *events = malloc(sizeof(struct epoll_event) * MAXEVENTS);
-    assert(events && "epoll_event: malloc");
+    add_accept_request(listenfd);
+   
+    printf("server loop start : \n");
+    while(1)
+    {
+        ret = io_uring_wait_cqe(&ring, &cqe) ;
+        assert( ret>0 && "io_uring_wait_cqe") ;
+        http_request_t* req = (http_request_t*) cqe->user_data;
+        
+        printf("event_type = %d\n", req->event_type) ;
 
-    http_request_t *request = malloc(sizeof(http_request_t));
-    init_http_request(request, listenfd, epfd, WEBROOT);
-
-    struct epoll_event event = {
-        .data.ptr = request,
-        .events = EPOLLIN | EPOLLET,
-    };
-    epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &event);
-
-    timer_init();
-
-    printf("Web server started.\n");
-
-    /* epoll_wait loop */
-    while (1) {
-        int time = find_timer();
-        debug("wait time = %d", time);
-        int n = epoll_wait(epfd, events, MAXEVENTS, time);
-        handle_expired_timers();
-
-        for (int i = 0; i < n; i++) {
-            http_request_t *r = events[i].data.ptr;
-            int fd = r->fd;
-            if (listenfd == fd) {
-                /* we hava one or more incoming connections */
-                while (1) {
-                    socklen_t inlen = 1;
-                    struct sockaddr_in clientaddr;
-                    int infd = accept(listenfd, (struct sockaddr *) &clientaddr,
-                                      &inlen);
-                    if (infd < 0) {
-                        if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
-                            /* we have processed all incoming connections */
-                            break;
-                        }
-                        log_err("accept");
+        switch(req->event_type) {
+            //accept request
+            case 0:                
+                if(cqe->res < 0) {
+                    if((errno == EAGAIN) || (errno == EWOULDBLOCK)) 
                         break;
-                    }
-
-                    rc = sock_set_non_blocking(infd);
-                    assert(rc == 0 && "sock_set_non_blocking");
-
-                    request = malloc(sizeof(http_request_t));
-                    if (!request) {
-                        log_err("malloc");
-                        break;
-                    }
-
-                    init_http_request(request, infd, epfd, WEBROOT);
-                    event.data.ptr = request;
-                    event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
-                    epoll_ctl(epfd, EPOLL_CTL_ADD, infd, &event);
-
-                    add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
-                }
-            } else {
-                if ((events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP) ||
-                    (!(events[i].events & EPOLLIN))) {
-                    log_err("epoll error fd: %d", r->fd);
-                    close(fd);
-                    continue;
                 }
 
-                do_request(events[i].data.ptr);
-            }
+                int rc = sock_set_non_blocking(cqe->res);
+                assert(rc == 0 && "sock_set_non_blocking");
+                
+                http_request_t *client_req = malloc(sizeof(http_request_t));
+                init_http_request(client_req, cqe->res, WEBROOT, 1); 
+
+                add_accept_request(listenfd);
+                
+                break ;
+            //read request
+            case 1:
+                
+                break ;
+            //write request
+            case 2:
+                break ;
         }
+        
+        io_uring_cqe_seen(&ring, cqe) ;
     }
-
     return 0;
 }
