@@ -32,7 +32,7 @@ deps += $(OBJS:%.o=%.o.d)
 
 $(TARGET): $(OBJS)
 	$(VECHO) "  LD\t$@\n"
-	$(Q)$(CC) -o $@ $^ $(LDFLAGS)
+	$(Q)$(CC) -o $@ $^ $(LDFLAGS) -luring
 
 check: all
 	@scripts/test.sh
