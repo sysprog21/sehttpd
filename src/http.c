@@ -7,17 +7,24 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <liburing.h>
+#include <arpa/inet.h>
 
 #include "http.h"
 #include "logger.h"
 #include "timer.h"
 
+#define Queue_Depth 512
 #define MAXLINE 8192
 #define SHORTLINE 512
+#define WEBROOT "./www"
+
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
+
+struct io_uring ring;
 
 static ssize_t writen(int fd, void *usrbuf, size_t n)
 {
@@ -56,6 +63,22 @@ static mime_type_t mime[] = {{".html", "text/html"},
                              {".jpg", "image/jpeg"},
                              {".css", "text/css"},
                              {NULL, "text/plain"}};
+
+int init_ring()
+{
+    int ret = io_uring_queue_init(Queue_Depth, &ring, 0) ;
+    return ret ;
+}
+
+struct io_uring_cqe *wait_cqe()
+{
+    struct io_uring_cqe *cqe;
+    int ret = io_uring_wait_cqe(&ring, &cqe) ;
+    assert(ret>0 && "io_uring_wait_cqe");
+
+    io_uring_cqe_seen(&ring, cqe) ;
+    return cqe;
+}
 
 static void parse_uri(char *uri, int uri_length, char *filename)
 {
@@ -183,7 +206,8 @@ static void serve_static(int fd,
     sprintf(header, "%sServer: seHTTPd\r\n", header);
     sprintf(header, "%s\r\n", header);
 
-    size_t n = (size_t) writen(fd, header, strlen(header));
+    //size_t n = (size_t) writen(fd, header, strlen(header));
+    size_t n = (size_t) add_write_request(fd, header, strlen(header));
     assert(n == strlen(header) && "writen error");
     if (n != strlen(header)) {
         log_err("n != strlen(header)");
@@ -200,7 +224,8 @@ static void serve_static(int fd,
     assert(srcaddr != (void *) -1 && "mmap error");
     close(srcfd);
 
-    writen(fd, srcaddr, filesize);
+    //writen(fd, srcaddr, filesize);
+    add_write_request(fd, srcaddr, filesize);
 
     munmap(srcaddr, filesize);
 }
@@ -214,109 +239,100 @@ static inline int init_http_out(http_out_t *o, int fd)
     return 0;
 }
 
-void do_request(void *ptr)
+void add_accept_request(int sockfd)
+{
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
+    struct sockaddr_in client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+
+    io_uring_prep_accept(sqe, sockfd, (struct sockaddr*)&client_addr, &client_addr_len, 0);
+
+    http_request_t *request = malloc(sizeof(http_request_t));
+
+    init_http_request(request, sockfd, WEBROOT, 0);
+    io_uring_sqe_set_data(sqe, request);
+    io_uring_submit(&ring);
+}
+
+
+void add_read_request(int clientfd)
+{
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
+    http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
+
+    init_http_request(request, clientfd, WEBROOT, 1);
+
+    request->iov[0].iov_base = malloc(sizeof(char) * 1024);
+    request->iov[0].iov_len  = 1024;
+
+    io_uring_prep_readv(sqe, clientfd, &request->iov[0], 1, 0);
+    io_uring_sqe_set_data(sqe, request);
+    io_uring_submit(&ring);
+}
+
+
+size_t add_write_request(int fd, void *usrbuf, size_t n)
+{
+    char *bufp = usrbuf;
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
+    http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
+    request->event_type = 2;
+    request->iovec_count = 1;
+    unsigned long len = strlen(bufp);
+    request->iov[0].iov_base = malloc(sizeof(char) * len);
+    request->iov[0].iov_len = len;
+    memcpy(request->iov[0].iov_base, bufp, len);
+    io_uring_prep_writev(sqe, fd, request->iov, request->iovec_count, 0);
+    io_uring_sqe_set_data(sqe, request);
+    io_uring_submit(&ring);
+
+    return n;
+}
+
+void handle_request(void *ptr)
 {
     http_request_t *r = ptr;
-    int fd = r->fd;
+    int fd = r->fd ;
     int rc;
     char filename[SHORTLINE];
     webroot = r->root;
 
-    del_timer(r);
-    for (;;) {
-        char *plast = &r->buf[r->last % MAX_BUF];
-        size_t remain_size =
-            MIN(MAX_BUF - (r->last - r->pos) - 1, MAX_BUF - r->last % MAX_BUF);
+    int n = strlen(r->iov[0].iov_base);
+    strncpy(r->buf, r->iov[0].iov_base, n);
 
-        int n = read(fd, plast, remain_size);
-        assert(r->last - r->pos < MAX_BUF && "request buffer overflow!");
+    r->last += n;
 
-        if (n == 0) /* EOF */
-            goto err;
+    rc = http_parse_request_line(r);
+    rc = http_parse_request_body(r);
 
-        if (n < 0) {
-            if (errno != EAGAIN) {
-                log_err("read err, and errno = %d", errno);
-                goto err;
-            }
-            break;
-        }
+    http_out_t *out = malloc(sizeof(http_out_t));
+    init_http_out(out, fd);
+    
+    parse_uri(r->uri_start, r->uri_end - r->uri_start, filename);
 
-        r->last += n;
-        assert(r->last - r->pos < MAX_BUF && "request buffer overflow!");
+    struct stat sbuf;
+    if (stat(filename, &sbuf) < 0) {
+        do_error(fd, filename, "404", "Not Found", "Can't find the file");
+        return;
+    }
+    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+        do_error(fd, filename, "403", "Forbidden", "Can't read the file");
+        return;
+    }
 
-        /* about to parse request line */
-        rc = http_parse_request_line(r);
-        if (rc == EAGAIN)
-            continue;
-        if (rc != 0) {
-            log_err("rc != 0");
-            goto err;
-        }
+    out->mtime = sbuf.st_mtime;
 
-        debug("uri = %.*s", (int) (r->uri_end - r->uri_start),
-              (char *) r->uri_start);
+    http_handle_header(r, out);
 
-        rc = http_parse_request_body(r);
-        if (rc == EAGAIN)
-            continue;
-        if (rc != 0) {
-            log_err("rc != 0");
-            goto err;
-        }
+    if (!out->status) 
+        out->status = HTTP_OK;
 
-        /* handle http header */
-        http_out_t *out = malloc(sizeof(http_out_t));
-        if (!out) {
-            log_err("no enough space for http_out_t");
-            exit(1);
-        }
+    serve_static(fd, filename, sbuf.st_size, out);
 
-        init_http_out(out, fd);
-
-        parse_uri(r->uri_start, r->uri_end - r->uri_start, filename);
-
-        struct stat sbuf;
-        if (stat(filename, &sbuf) < 0) {
-            do_error(fd, filename, "404", "Not Found", "Can't find the file");
-            continue;
-        }
-
-        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-            do_error(fd, filename, "403", "Forbidden", "Can't read the file");
-            continue;
-        }
-
-        out->mtime = sbuf.st_mtime;
-
-        http_handle_header(r, out);
-        assert(list_empty(&(r->list)) && "header list should be empty");
-
-        if (!out->status)
-            out->status = HTTP_OK;
-
-        serve_static(fd, filename, sbuf.st_size, out);
-
-        if (!out->keep_alive) {
-            debug("no keep_alive! ready to close");
-            free(out);
-            goto close;
-        }
+    if(!out->keep_alive) {
         free(out);
     }
 
-    struct epoll_event event = {
-        .data.ptr = ptr,
-        .events = EPOLLIN | EPOLLET | EPOLLONESHOT,
-    };
-    epoll_ctl(r->epfd, EPOLL_CTL_MOD, r->fd, &event);
-
-    add_timer(r, TIMEOUT_DEFAULT, http_close_conn);
-    return;
-
-err:
-close:
-    /* TODO: handle the timeout raised by inactive connections */
-    rc = http_close_conn(r);
-    assert(rc == 0 && "do_request: http_close_conn");
+    free(out);
 }
+

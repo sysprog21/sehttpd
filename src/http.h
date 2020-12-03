@@ -50,7 +50,6 @@ typedef struct {
     
     int event_type ;
     int iovec_count ;
-    int client_socket ;
     struct iovec iov[];
 } http_request_t;
 
@@ -85,11 +84,10 @@ int http_close_conn(http_request_t *r);
 
 static inline void init_http_request(http_request_t *r,
                                      int fd,
-                                     /*int epfd,*/
                                      char *root,
                                      int event_type)
 {
-    r->fd = fd/*, r->epfd = epfd*/;
+    r->fd = fd;
     r->pos = r->last = 0;
     r->state = 0;
     r->root = root;
@@ -99,6 +97,12 @@ static inline void init_http_request(http_request_t *r,
 
 /* TODO: public functions should have conventions to prefix http_ */
 void do_request(void *infd);
+void handle_request(void *ptr);
+void add_accept_request(int sockfd);
+void add_read_request(int clientfd);
+size_t add_write_request(int fd, void *usrbuf, size_t n);
+int init_ring();
+struct io_uring_cqe *wait_cqe();
 
 int http_parse_request_line(http_request_t *r);
 int http_parse_request_body(http_request_t *r);
