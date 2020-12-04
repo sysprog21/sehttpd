@@ -206,7 +206,6 @@ static void serve_static(int fd,
     sprintf(header, "%sServer: seHTTPd\r\n", header);
     sprintf(header, "%s\r\n", header);
 
-    //size_t n = (size_t) writen(fd, header, strlen(header));
     size_t n = (size_t) add_write_request(fd, header, strlen(header));
     assert(n == strlen(header) && "writen error");
     if (n != strlen(header)) {
@@ -224,9 +223,8 @@ static void serve_static(int fd,
     assert(srcaddr != (void *) -1 && "mmap error");
     close(srcfd);
 
-    //writen(fd, srcaddr, filesize);
     add_write_request(fd, srcaddr, filesize);
-
+    
     munmap(srcaddr, filesize);
 }
 
@@ -274,6 +272,9 @@ void add_read_request(int clientfd)
 size_t add_write_request(int fd, void *usrbuf, size_t n)
 {
     char *bufp = usrbuf;
+    
+    //printf("%s",bufp);
+
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
     request->event_type = 2;
@@ -330,8 +331,14 @@ void handle_request(void *ptr)
     serve_static(fd, filename, sbuf.st_size, out);
 
     if(!out->keep_alive) {
+        printf("no keep alive!\n");
         free(out);
+        rc = http_close_conn(r);
+        printf("close conn rc = %d\n",rc);
+        return ;
     }
+    add_timer(r, TIMEOUT_DEFAULT, http_close_conn);
+
 
     free(out);
 }

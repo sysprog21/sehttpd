@@ -21,8 +21,6 @@
 #define PORT 8081
 #define WEBROOT "./www"
 
-//struct io_uring ring ;
-
 static int open_listenfd(int port)
 {
     int listenfd, optval = 1;
@@ -77,42 +75,30 @@ static int sock_set_non_blocking(int fd)
 /* TODO: use command line options to specify */
 int main()
 {
-    if (sigaction(SIGPIPE,
-                  &(struct sigaction){.sa_handler = SIG_IGN, .sa_flags = 0},
-                  NULL)) {
-        log_err("Failed to install sigal handler for SIGPIPE");
-        return 0;
-    }
-
     int listenfd = open_listenfd(PORT);
     assert(listen >= 0 && "open_listenfd");
 
     int ret = init_ring();
     assert(ret >= 0 && "io_uring_queue_init") ;
-    
-    
+   
+    timer_init();
+
     add_accept_request(listenfd);
    
-    printf("server loop start : \n");
-    
+    printf("server loop start : \n");   
     while(1)
     {
-        //ret = io_uring_wait_cqe(&ring, &cqe) ;
-        //assert( ret>0 && "io_uring_wait_cqe") ;
         struct io_uring_cqe *cqe = wait_cqe();       
         http_request_t *req = (http_request_t*) cqe->user_data;
         
         printf("event_type = %d\n", req->event_type) ;
+        printf("res = %d\n",cqe->res);
         
         switch(req->event_type) {
             case 0: {
                 int fd = cqe->res;
-                if(fd < 0) {
-                    if((errno == EAGAIN) || (errno == EWOULDBLOCK)) 
-                        break;
-                }
-                add_read_request(fd);
                 add_accept_request(listenfd);
+                add_read_request(fd);
                 free(req);
                 break ;
             }
@@ -124,21 +110,19 @@ int main()
                 break ;
             }
 
-            case 2:
+            case 2: {
                 for (int i = 0 ; i < req->iovec_count ; i++)
                 {
                     free(req->iov[i].iov_base);    
                 }
-                close(req->fd);
+                //close(req->fd);
+                add_read_request(req->fd);
                 free(req);
                 break ;
-
+            }
             default :
                 break ;
         }
-        
-        //io_uring_cqe_seen(&ring, cqe) ;
-    }
-    
+    }    
     return 0;
 }
