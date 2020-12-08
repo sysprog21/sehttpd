@@ -97,9 +97,9 @@ static inline void init_http_request(http_request_t *r,
 
 /* TODO: public functions should have conventions to prefix http_ */
 void do_request(void *infd);
-void handle_request(void *ptr);
+void handle_request(void *ptr, int n);
 void add_accept_request(int sockfd);
-void add_read_request(int clientfd);
+void add_read_request(int clientfd, http_request_t *req);
 
 size_t add_write_request(int fd, void *usrbuf, size_t n);
 int init_ring();

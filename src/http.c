@@ -14,7 +14,7 @@
 #include "logger.h"
 #include "timer.h"
 
-#define Queue_Depth 512
+#define Queue_Depth 12
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
@@ -253,12 +253,12 @@ void add_accept_request(int sockfd)
 }
 
 
-void add_read_request(int clientfd)
+void add_read_request(int clientfd, http_request_t *request)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
-    http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
-
-    init_http_request(request, clientfd, WEBROOT, 1);
+    //http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
+    //init_http_request(request, clientfd, WEBROOT, 1);
+    //add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
 
     request->iov[0].iov_base = malloc(sizeof(char) * 1024);
     request->iov[0].iov_len  = 1024;
@@ -272,8 +272,6 @@ void add_read_request(int clientfd)
 size_t add_write_request(int fd, void *usrbuf, size_t n)
 {
     char *bufp = usrbuf;
-    
-    //printf("%s",bufp);
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
@@ -290,7 +288,7 @@ size_t add_write_request(int fd, void *usrbuf, size_t n)
     return n;
 }
 
-void handle_request(void *ptr)
+void handle_request(void *ptr, int n)
 {
     http_request_t *r = ptr;
     int fd = r->fd ;
@@ -298,48 +296,66 @@ void handle_request(void *ptr)
     char filename[SHORTLINE];
     webroot = r->root;
 
-    int n = strlen(r->iov[0].iov_base);
-    strncpy(r->buf, r->iov[0].iov_base, n);
+    del_timer(r);
+    for(;;) {
+        char *plast = &r->buf[r->last % MAX_BUF];
+        size_t remain_size =
+            MIN(MAX_BUF - (r->last - r->pos) - 1, MAX_BUF - r->last % MAX_BUF);
 
-    r->last += n;
+        if (n > remain_size)
+        {
+            printf("over buffer\n");
+            break;
+        }
 
-    rc = http_parse_request_line(r);
-    rc = http_parse_request_body(r);
+        strncpy(plast, r->iov[0].iov_base, n);
 
-    http_out_t *out = malloc(sizeof(http_out_t));
-    init_http_out(out, fd);
-    
-    parse_uri(r->uri_start, r->uri_end - r->uri_start, filename);
+        r->last += n;
 
-    struct stat sbuf;
-    if (stat(filename, &sbuf) < 0) {
-        do_error(fd, filename, "404", "Not Found", "Can't find the file");
-        return;
-    }
-    if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-        do_error(fd, filename, "403", "Forbidden", "Can't read the file");
-        return;
-    }
+        rc = http_parse_request_line(r);
 
-    out->mtime = sbuf.st_mtime;
+        debug("uri = %.*s", (int) (r->uri_end - r->uri_start),
+            (char *) r->uri_start);
 
-    http_handle_header(r, out);
+        rc = http_parse_request_body(r);
 
-    if (!out->status) 
-        out->status = HTTP_OK;
+        http_out_t *out = malloc(sizeof(http_out_t));
+        
+        init_http_out(out, fd);
 
-    serve_static(fd, filename, sbuf.st_size, out);
+        parse_uri(r->uri_start, r->uri_end - r->uri_start, filename);
 
-    if(!out->keep_alive) {
-        printf("no keep alive!\n");
+        struct stat sbuf;
+        if (stat(filename, &sbuf) < 0) {
+            do_error(fd, filename, "404", "Not Found", "Can't find the file");
+            return;
+        }
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+            do_error(fd, filename, "403", "Forbidden", "Can't read the file");
+            return;
+        }
+
+        out->mtime = sbuf.st_mtime;
+        http_handle_header(r, out);
+
+        if (!out->status) 
+            out->status = HTTP_OK;
+
+        serve_static(fd, filename, sbuf.st_size, out);
+
+        if(!out->keep_alive) {
+            free(out);
+            goto close;
+        }
         free(out);
-        rc = http_close_conn(r);
-        printf("close conn rc = %d\n",rc);
-        return ;
+        break;
     }
     add_timer(r, TIMEOUT_DEFAULT, http_close_conn);
-
-
-    free(out);
+    add_read_request(fd, ptr);
+    return ;
+err:
+close:
+    rc = http_close_conn(r);
+    assert(rc == 0 && "do_request: http_close_conn");
 }
 

@@ -92,21 +92,23 @@ int main()
         http_request_t *req = (http_request_t*) cqe->user_data;
         
         printf("event_type = %d\n", req->event_type) ;
-        printf("res = %d\n",cqe->res);
         
         switch(req->event_type) {
             case 0: {
                 int fd = cqe->res;
                 add_accept_request(listenfd);
-                add_read_request(fd);
+                http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
+                init_http_request(request, fd, WEBROOT, 1);
+                add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
+                add_read_request(fd, request);
                 free(req);
                 break ;
             }
 
             case 1: {
-                handle_request(req);
+                int read_len = cqe->res;
+                handle_request(req, read_len);
                 free(req->iov[0].iov_base);
-                free(req); 
                 break ;
             }
 
@@ -115,8 +117,6 @@ int main()
                 {
                     free(req->iov[i].iov_base);    
                 }
-                //close(req->fd);
-                add_read_request(req->fd);
                 free(req);
                 break ;
             }
