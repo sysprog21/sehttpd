@@ -108,7 +108,6 @@ int main()
             case 1: {
                 int read_len = cqe->res;
                 handle_request(req, read_len);
-                free(req->iov[0].iov_base);
                 break ;
             }
 
@@ -120,8 +119,6 @@ int main()
                 free(req);
                 break ;
             }
-            default :
-                break ;
         }
     }    
     return 0;

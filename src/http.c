@@ -14,7 +14,7 @@
 #include "logger.h"
 #include "timer.h"
 
-#define Queue_Depth 12
+#define Queue_Depth 256
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
@@ -207,7 +207,9 @@ static void serve_static(int fd,
     sprintf(header, "%s\r\n", header);
 
     size_t n = (size_t) add_write_request(fd, header, strlen(header));
+    //size_t n = (size_t) writen(fd, header, strlen(header));
     assert(n == strlen(header) && "writen error");
+    
     if (n != strlen(header)) {
         log_err("n != strlen(header)");
         return;
@@ -219,13 +221,9 @@ static void serve_static(int fd,
     int srcfd = open(filename, O_RDONLY, 0);
     assert(srcfd > 2 && "open error");
     /* TODO: use sendfile(2) for zero-copy support */
-    char *srcaddr = mmap(NULL, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
-    assert(srcaddr != (void *) -1 && "mmap error");
+    n = sendfile(fd, srcfd, 0, filesize);
+    assert(n == filesize && "sendfile");
     close(srcfd);
-
-    add_write_request(fd, srcaddr, filesize);
-    
-    munmap(srcaddr, filesize);
 }
 
 static inline int init_http_out(http_out_t *o, int fd)
@@ -256,9 +254,6 @@ void add_accept_request(int sockfd)
 void add_read_request(int clientfd, http_request_t *request)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
-    //http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
-    //init_http_request(request, clientfd, WEBROOT, 1);
-    //add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
 
     request->iov[0].iov_base = malloc(sizeof(char) * 1024);
     request->iov[0].iov_len  = 1024;
@@ -302,16 +297,14 @@ void handle_request(void *ptr, int n)
         size_t remain_size =
             MIN(MAX_BUF - (r->last - r->pos) - 1, MAX_BUF - r->last % MAX_BUF);
 
-        if (n > remain_size)
-        {
-            printf("over buffer\n");
-            break;
+        if (n > remain_size) {
+            printf("over buffer!\n");
+            return ;
         }
 
         strncpy(plast, r->iov[0].iov_base, n);
 
         r->last += n;
-
         rc = http_parse_request_line(r);
 
         debug("uri = %.*s", (int) (r->uri_end - r->uri_start),
@@ -324,7 +317,7 @@ void handle_request(void *ptr, int n)
         init_http_out(out, fd);
 
         parse_uri(r->uri_start, r->uri_end - r->uri_start, filename);
-
+        
         struct stat sbuf;
         if (stat(filename, &sbuf) < 0) {
             do_error(fd, filename, "404", "Not Found", "Can't find the file");
@@ -343,7 +336,8 @@ void handle_request(void *ptr, int n)
 
         serve_static(fd, filename, sbuf.st_size, out);
 
-        if(!out->keep_alive) {
+        free(r->iov[0].iov_base);
+        if(!out->keep_alive || remain_size < 2000) {
             free(out);
             goto close;
         }
