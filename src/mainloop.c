@@ -91,8 +91,6 @@ int main()
         struct io_uring_cqe *cqe = wait_cqe();       
         http_request_t *req = (http_request_t*) cqe->user_data;
         
-        printf("event_type = %d\n", req->event_type) ;
-        
         switch(req->event_type) {
             case 0: {
                 int fd = cqe->res;

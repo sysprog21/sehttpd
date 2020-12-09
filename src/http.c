@@ -14,7 +14,7 @@
 #include "logger.h"
 #include "timer.h"
 
-#define Queue_Depth 256
+#define Queue_Depth 512
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
@@ -244,8 +244,8 @@ void add_accept_request(int sockfd)
     io_uring_prep_accept(sqe, sockfd, (struct sockaddr*)&client_addr, &client_addr_len, 0);
 
     http_request_t *request = malloc(sizeof(http_request_t));
+    request->event_type = 0 ;
 
-    init_http_request(request, sockfd, WEBROOT, 0);
     io_uring_sqe_set_data(sqe, request);
     io_uring_submit(&ring);
 }
@@ -255,8 +255,8 @@ void add_read_request(int clientfd, http_request_t *request)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
 
-    request->iov[0].iov_base = malloc(sizeof(char) * 1024);
-    request->iov[0].iov_len  = 1024;
+    request->iov[0].iov_base = malloc(sizeof(char) * 4000);
+    request->iov[0].iov_len  = 4000;
 
     io_uring_prep_readv(sqe, clientfd, &request->iov[0], 1, 0);
     io_uring_sqe_set_data(sqe, request);
@@ -299,7 +299,7 @@ void handle_request(void *ptr, int n)
 
         if (n > remain_size) {
             printf("over buffer!\n");
-            return ;
+            goto close ;
         }
 
         strncpy(plast, r->iov[0].iov_base, n);
@@ -337,7 +337,7 @@ void handle_request(void *ptr, int n)
         serve_static(fd, filename, sbuf.st_size, out);
 
         free(r->iov[0].iov_base);
-        if(!out->keep_alive || remain_size < 2000) {
+        if(!out->keep_alive || remain_size < 6000) {
             free(out);
             goto close;
         }
