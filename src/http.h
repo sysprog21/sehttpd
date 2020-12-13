@@ -84,14 +84,12 @@ int http_close_conn(http_request_t *r);
 
 static inline void init_http_request(http_request_t *r,
                                      int fd,
-                                     char *root,
-                                     int event_type)
+                                     char *root)
 {
     r->fd = fd;
     r->pos = r->last = 0;
     r->state = 0;
     r->root = root;
-    r->event_type = event_type;
     INIT_LIST_HEAD(&(r->list));
 }
 
@@ -99,11 +97,11 @@ static inline void init_http_request(http_request_t *r,
 void do_request(void *infd);
 void handle_request(void *ptr, int n);
 void add_accept_request(int sockfd);
-void add_read_request(int clientfd, http_request_t *req);
+//void add_read_request(http_request_t *req);
+//void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
 
-size_t add_write_request(int fd, void *usrbuf, size_t n);
-int init_ring();
-struct io_uring_cqe *wait_cqe();
+void init_ring();
+void io_uring_loop();
 
 int http_parse_request_line(http_request_t *r);
 int http_parse_request_body(http_request_t *r);

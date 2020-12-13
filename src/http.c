@@ -14,7 +14,7 @@
 #include "logger.h"
 #include "timer.h"
 
-#define Queue_Depth 512
+#define Queue_Depth 1024
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
@@ -25,6 +25,9 @@
 #endif
 
 struct io_uring ring;
+
+static void add_read_request(http_request_t *request);
+static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
 
 static ssize_t writen(int fd, void *usrbuf, size_t n)
 {
@@ -64,20 +67,55 @@ static mime_type_t mime[] = {{".html", "text/html"},
                              {".css", "text/css"},
                              {NULL, "text/plain"}};
 
-int init_ring()
+void init_ring()
 {
     int ret = io_uring_queue_init(Queue_Depth, &ring, 0) ;
-    return ret ;
+    assert( ret>=0 && "io_uring_queue_init");
 }
 
-struct io_uring_cqe *wait_cqe()
-{
-    struct io_uring_cqe *cqe;
-    int ret = io_uring_wait_cqe(&ring, &cqe) ;
-    assert(ret>0 && "io_uring_wait_cqe");
+void io_uring_loop() {
+    printf("server start : \n");
 
-    io_uring_cqe_seen(&ring, cqe) ;
-    return cqe;
+    while(1)
+    {
+        struct io_uring_cqe *cqe ;
+        int ret = io_uring_wait_cqe(&ring, &cqe);
+        assert(ret > 0 && "io_uring_wait_cqe");
+
+        http_request_t *req = (http_request_t*) cqe->user_data;
+        
+        printf("%d\n",req->event_type);
+
+        switch(req->event_type) {
+            case 0: {
+                int fd = cqe->res;
+                add_accept_request(req->fd);
+                http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec) );
+                init_http_request(request, fd, WEBROOT);
+                add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
+                add_read_request(request);
+                free(req);
+                break ;
+            }
+
+            case 1: {
+                int read_len = cqe->res;
+                handle_request(req, read_len);
+                break ;
+            }
+
+            case 2: {
+                add_read_request(req);
+                break ;
+            }
+
+            case 3: {
+                io_uring_cqe_seen(&ring, cqe);
+                continue;
+            }
+        }
+        io_uring_cqe_seen(&ring, cqe);
+    }   
 }
 
 static void parse_uri(char *uri, int uri_length, char *filename)
@@ -177,7 +215,8 @@ static const char *get_msg_from_status(int status_code)
 static void serve_static(int fd,
                          char *filename,
                          size_t filesize,
-                         http_out_t *out)
+                         http_out_t *out,
+                         http_request_t *r)
 {
     char header[MAXLINE];
 
@@ -206,23 +245,17 @@ static void serve_static(int fd,
     sprintf(header, "%sServer: seHTTPd\r\n", header);
     sprintf(header, "%s\r\n", header);
 
-    size_t n = (size_t) add_write_request(fd, header, strlen(header));
-    //size_t n = (size_t) writen(fd, header, strlen(header));
-    assert(n == strlen(header) && "writen error");
-    
-    if (n != strlen(header)) {
-        log_err("n != strlen(header)");
-        return;
-    }
+    add_write_request(fd, header, strlen(header), r);
 
     if (!out->modified)
         return;
 
     int srcfd = open(filename, O_RDONLY, 0);
     assert(srcfd > 2 && "open error");
-    /* TODO: use sendfile(2) for zero-copy support */
-    n = sendfile(fd, srcfd, 0, filesize);
+
+    int n = sendfile(fd, srcfd, 0, filesize);
     assert(n == filesize && "sendfile");
+
     close(srcfd);
 }
 
@@ -245,15 +278,18 @@ void add_accept_request(int sockfd)
 
     http_request_t *request = malloc(sizeof(http_request_t));
     request->event_type = 0 ;
+    request->fd = sockfd ;
 
     io_uring_sqe_set_data(sqe, request);
     io_uring_submit(&ring);
 }
 
 
-void add_read_request(int clientfd, http_request_t *request)
+static void add_read_request(http_request_t *request)
 {
+    int clientfd = request->fd ;
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
+    request->event_type = 1;
 
     request->iov[0].iov_base = malloc(sizeof(char) * 4000);
     request->iov[0].iov_len  = 4000;
@@ -263,24 +299,22 @@ void add_read_request(int clientfd, http_request_t *request)
     io_uring_submit(&ring);
 }
 
-
-size_t add_write_request(int fd, void *usrbuf, size_t n)
+static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r)
 {
     char *bufp = usrbuf;
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
-    http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
+    http_request_t *request = r;
     request->event_type = 2;
     request->iovec_count = 1;
     unsigned long len = strlen(bufp);
-    request->iov[0].iov_base = malloc(sizeof(char) * len);
     request->iov[0].iov_len = len;
     memcpy(request->iov[0].iov_base, bufp, len);
     io_uring_prep_writev(sqe, fd, request->iov, request->iovec_count, 0);
     io_uring_sqe_set_data(sqe, request);
     io_uring_submit(&ring);
 
-    return n;
+    free(request->iov[0].iov_base);
 }
 
 void handle_request(void *ptr, int n)
@@ -293,12 +327,22 @@ void handle_request(void *ptr, int n)
 
     del_timer(r);
     for(;;) {
+        if (n==0)
+            goto err;
+
+        else if (n < 0) {
+            if (errno != EAGAIN) {
+                log_err("read err, and errno = %d",errno);
+                goto err;
+            }
+            break;
+        }
+
         char *plast = &r->buf[r->last % MAX_BUF];
         size_t remain_size =
             MIN(MAX_BUF - (r->last - r->pos) - 1, MAX_BUF - r->last % MAX_BUF);
 
         if (n > remain_size) {
-            printf("over buffer!\n");
             goto close ;
         }
 
@@ -334,9 +378,8 @@ void handle_request(void *ptr, int n)
         if (!out->status) 
             out->status = HTTP_OK;
 
-        serve_static(fd, filename, sbuf.st_size, out);
+        serve_static(fd, filename, sbuf.st_size, out, r);
 
-        free(r->iov[0].iov_base);
         if(!out->keep_alive || remain_size < 6000) {
             free(out);
             goto close;
@@ -345,10 +388,10 @@ void handle_request(void *ptr, int n)
         break;
     }
     add_timer(r, TIMEOUT_DEFAULT, http_close_conn);
-    add_read_request(fd, ptr);
     return ;
 err:
 close:
+    r->event_type = 3;
     rc = http_close_conn(r);
     assert(rc == 0 && "do_request: http_close_conn");
 }

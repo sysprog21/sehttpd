@@ -78,27 +78,27 @@ int main()
     int listenfd = open_listenfd(PORT);
     assert(listen >= 0 && "open_listenfd");
 
-    int ret = init_ring();
-    assert(ret >= 0 && "io_uring_queue_init") ;
-   
+    init_ring();   
     timer_init();
-
     add_accept_request(listenfd);
-   
-    printf("server loop start : \n");   
+    
+    io_uring_loop();
+    /*
     while(1)
     {
         struct io_uring_cqe *cqe = wait_cqe();       
         http_request_t *req = (http_request_t*) cqe->user_data;
         
+        printf("%d\n",req->event_type);
+
         switch(req->event_type) {
             case 0: {
                 int fd = cqe->res;
                 add_accept_request(listenfd);
-                http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec));
-                init_http_request(request, fd, WEBROOT, 1);
+                http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec)*2 );
+                init_http_request(request, fd, WEBROOT);
                 add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
-                add_read_request(fd, request);
+                add_read_request(request);
                 free(req);
                 break ;
             }
@@ -110,14 +110,15 @@ int main()
             }
 
             case 2: {
-                for (int i = 0 ; i < req->iovec_count ; i++)
-                {
-                    free(req->iov[i].iov_base);    
-                }
-                free(req);
+                add_read_request(req);
                 break ;
             }
+            
+            case 3: {
+                continue;
+            }
         }
-    }    
+    }
+    */    
     return 0;
 }
