@@ -81,17 +81,17 @@ void io_uring_loop() {
         struct io_uring_cqe *cqe ;
         int ret = io_uring_wait_cqe(&ring, &cqe);
         assert(ret > 0 && "io_uring_wait_cqe");
-
         http_request_t *req = (http_request_t*) cqe->user_data;
-        
-        printf("%d\n",req->event_type);
-
+        printf("event type = %d\n",req->event_type);
         switch(req->event_type) {
             case 0: {
                 int fd = cqe->res;
                 add_accept_request(req->fd);
+                
                 http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec) );
                 init_http_request(request, fd, WEBROOT);
+                request->iov[0].iov_base = malloc(sizeof(char)*4000);
+
                 add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
                 add_read_request(request);
                 free(req);
@@ -290,8 +290,6 @@ static void add_read_request(http_request_t *request)
     int clientfd = request->fd ;
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     request->event_type = 1;
-
-    request->iov[0].iov_base = malloc(sizeof(char) * 4000);
     request->iov[0].iov_len  = 4000;
 
     io_uring_prep_readv(sqe, clientfd, &request->iov[0], 1, 0);
@@ -313,8 +311,6 @@ static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r)
     io_uring_prep_writev(sqe, fd, request->iov, request->iovec_count, 0);
     io_uring_sqe_set_data(sqe, request);
     io_uring_submit(&ring);
-
-    free(request->iov[0].iov_base);
 }
 
 void handle_request(void *ptr, int n)
@@ -392,6 +388,7 @@ void handle_request(void *ptr, int n)
 err:
 close:
     r->event_type = 3;
+    free(r->iov[0].iov_base);
     rc = http_close_conn(r);
     assert(rc == 0 && "do_request: http_close_conn");
 }
