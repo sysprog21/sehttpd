@@ -82,7 +82,7 @@ void io_uring_loop() {
         int ret = io_uring_wait_cqe(&ring, &cqe);
         assert(ret > 0 && "io_uring_wait_cqe");
         http_request_t *req = (http_request_t*) cqe->user_data;
-        printf("event type = %d\n",req->event_type);
+
         switch(req->event_type) {
             case 0: {
                 int fd = cqe->res;
@@ -388,7 +388,6 @@ void handle_request(void *ptr, int n)
 err:
 close:
     r->event_type = 3;
-    free(r->iov[0].iov_base);
     rc = http_close_conn(r);
     assert(rc == 0 && "do_request: http_close_conn");
 }

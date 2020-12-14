@@ -83,42 +83,5 @@ int main()
     add_accept_request(listenfd);
     
     io_uring_loop();
-    /*
-    while(1)
-    {
-        struct io_uring_cqe *cqe = wait_cqe();       
-        http_request_t *req = (http_request_t*) cqe->user_data;
-        
-        printf("%d\n",req->event_type);
-
-        switch(req->event_type) {
-            case 0: {
-                int fd = cqe->res;
-                add_accept_request(listenfd);
-                http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec)*2 );
-                init_http_request(request, fd, WEBROOT);
-                add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
-                add_read_request(request);
-                free(req);
-                break ;
-            }
-
-            case 1: {
-                int read_len = cqe->res;
-                handle_request(req, read_len);
-                break ;
-            }
-
-            case 2: {
-                add_read_request(req);
-                break ;
-            }
-            
-            case 3: {
-                continue;
-            }
-        }
-    }
-    */    
     return 0;
 }
