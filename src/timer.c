@@ -7,7 +7,7 @@
 #include "timer.h"
 
 #define TIMER_INFINITE (-1)
-#define PQ_DEFAULT_SIZE 10
+#define PQ_DEFAULT_SIZE 512
 
 typedef int (*prio_queue_comparator)(void *pi, void *pj);
 

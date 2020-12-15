@@ -9,12 +9,13 @@
 #include <unistd.h>
 #include <liburing.h>
 #include <arpa/inet.h>
+#include <time.h>
 
 #include "http.h"
 #include "logger.h"
 #include "timer.h"
 
-#define Queue_Depth 1024
+#define Queue_Depth 256
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
@@ -79,43 +80,46 @@ void io_uring_loop() {
     while(1)
     {
         struct io_uring_cqe *cqe ;
-        int ret = io_uring_wait_cqe(&ring, &cqe);
-        assert(ret > 0 && "io_uring_wait_cqe");
-        http_request_t *req = (http_request_t*) cqe->user_data;
+        unsigned head;
+        unsigned count = 0;
 
-        switch(req->event_type) {
-            case 0: {
-                int fd = cqe->res;
-                add_accept_request(req->fd);
+        io_uring_for_each_cqe(&ring, head, cqe){
+            ++count;
+            http_request_t *req = (http_request_t*) cqe->user_data;
+
+            switch(req->event_type) {
+                case 0: {
+                    int fd = cqe->res;
+                    add_accept_request(req->fd);
                 
-                http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec) );
-                init_http_request(request, fd, WEBROOT);
-                request->iov[0].iov_base = malloc(sizeof(char)*4000);
+                    http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec) );
+                    init_http_request(request, fd, WEBROOT);
+                    request->iov[0].iov_base = malloc(sizeof(char)*4000);
 
-                add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
-                add_read_request(request);
-                free(req);
-                break ;
-            }
+                    add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
+                    add_read_request(request);
+                    free(req);
+                    break ;
+                }
 
-            case 1: {
-                int read_len = cqe->res;
-                handle_request(req, read_len);
-                break ;
-            }
+                case 1: {
+                    int read_len = cqe->res;
+                    handle_request(req, read_len);
+                    break ;
+                }
 
-            case 2: {
-                add_read_request(req);
-                break ;
-            }
+                case 2: {
+                    add_read_request(req);
+                    break ;
+                }
 
-            case 3: {
-                io_uring_cqe_seen(&ring, cqe);
-                continue;
+                case 3: {
+                    continue;
+                }
             }
         }
-        io_uring_cqe_seen(&ring, cqe);
-    }   
+        io_uring_cq_advance(&ring, count);        
+    }
 }
 
 static void parse_uri(char *uri, int uri_length, char *filename)
@@ -321,8 +325,11 @@ void handle_request(void *ptr, int n)
     char filename[SHORTLINE];
     webroot = r->root;
 
+    clock_t t1, t2;
+
     del_timer(r);
     for(;;) {
+        t1 = clock();
         if (n==0)
             goto err;
 
@@ -381,6 +388,10 @@ void handle_request(void *ptr, int n)
             goto close;
         }
         free(out);
+
+        t2 = clock();
+        printf("%lf\n", (t2-t1)/(double)(CLOCKS_PER_SEC));
+
         break;
     }
     add_timer(r, TIMEOUT_DEFAULT, http_close_conn);
