@@ -47,7 +47,8 @@ typedef struct {
     void *cur_header_value_start, *cur_header_value_end;
 
     void *timer;
-    
+
+    int bid ;    
     int event_type ;
     int iovec_count ;
     struct iovec iov[];

@@ -15,11 +15,15 @@
 #include "logger.h"
 #include "timer.h"
 
-#define Queue_Depth 256
+#define Queue_Depth 2048
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
 
+#define MAX_CONNECTIONS 1024
+#define MAX_MESSAGE_LEN 2048
+char bufs[MAX_CONNECTIONS][MAX_MESSAGE_LEN] = {0};
+int group_id = 8888;
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -29,6 +33,7 @@ struct io_uring ring;
 
 static void add_read_request(http_request_t *request);
 static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
+static void add_provide_buf(int bid);
 
 static ssize_t writen(int fd, void *usrbuf, size_t n)
 {
@@ -70,8 +75,38 @@ static mime_type_t mime[] = {{".html", "text/html"},
 
 void init_ring()
 {
-    int ret = io_uring_queue_init(Queue_Depth, &ring, 0) ;
-    assert( ret>=0 && "io_uring_queue_init");
+    struct io_uring_params params;
+    memset(&params, 0, sizeof(params));
+
+    int ret = io_uring_queue_init_params(Queue_Depth, &ring, &params);
+    assert(ret >= 0 && "io_uring_queue_init");
+    
+    if (!(params.features & IORING_FEAT_FAST_POLL)) {
+        printf("IORING_FEAT_FAST_POLL not available in the kernel, quiting...\n");
+        exit(0);
+    }
+    
+    struct io_uring_probe *probe;
+    probe = io_uring_get_probe_ring(&ring);
+    if (!probe || !io_uring_opcode_supported(probe, IORING_OP_PROVIDE_BUFFERS)) {
+        printf("Buffer select not supported, skipping...\n");
+        exit(0);
+    }
+    free(probe);
+
+    struct io_uring_sqe *sqe;
+    struct io_uring_cqe *cqe;
+
+    sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_provide_buffers(sqe, bufs, MAX_MESSAGE_LEN, MAX_CONNECTIONS, group_id, 0);
+
+    io_uring_submit(&ring);
+    io_uring_wait_cqe(&ring, &cqe);
+    if (cqe->res < 0) {
+        printf("cqe->res = %d\n", cqe->res);
+        exit(1);
+    }
+    io_uring_cqe_seen(&ring, cqe);
 }
 
 void io_uring_loop() {
@@ -85,16 +120,15 @@ void io_uring_loop() {
 
         io_uring_for_each_cqe(&ring, head, cqe){
             ++count;
-            http_request_t *req = (http_request_t*) cqe->user_data;
+            http_request_t *req = io_uring_cqe_get_data(cqe);
 
             switch(req->event_type) {
                 case 0: {
                     int fd = cqe->res;
                     add_accept_request(req->fd);
                 
-                    http_request_t *request = malloc(sizeof(http_request_t) + sizeof(struct iovec) );
+                    http_request_t *request = malloc(sizeof(http_request_t) );
                     init_http_request(request, fd, WEBROOT);
-                    request->iov[0].iov_base = malloc(sizeof(char)*4000);
 
                     add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
                     add_read_request(request);
@@ -104,6 +138,7 @@ void io_uring_loop() {
 
                 case 1: {
                     int read_len = cqe->res;
+                    req->bid = ( cqe->flags >> IORING_CQE_BUFFER_SHIFT );
                     handle_request(req, read_len);
                     break ;
                 }
@@ -114,7 +149,14 @@ void io_uring_loop() {
                 }
 
                 case 3: {
-                    continue;
+                    free(req);
+                    break;
+                }
+
+                case 4: {
+                    close(req->fd);
+                    free(req);
+                    break;
                 }
             }
         }
@@ -285,6 +327,7 @@ void add_accept_request(int sockfd)
     request->fd = sockfd ;
 
     io_uring_sqe_set_data(sqe, request);
+    io_uring_sqe_set_flags(sqe, 0);
     io_uring_submit(&ring);
 }
 
@@ -293,11 +336,13 @@ static void add_read_request(http_request_t *request)
 {
     int clientfd = request->fd ;
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
-    request->event_type = 1;
-    request->iov[0].iov_len  = 4000;
+    io_uring_prep_recv(sqe, clientfd, NULL, MAX_MESSAGE_LEN, 0);
+    io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
+    sqe->buf_group = group_id;
 
-    io_uring_prep_readv(sqe, clientfd, &request->iov[0], 1, 0);
+    request->event_type = 1;
     io_uring_sqe_set_data(sqe, request);
+
     io_uring_submit(&ring);
 }
 
@@ -308,12 +353,22 @@ static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r)
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     http_request_t *request = r;
     request->event_type = 2;
-    request->iovec_count = 1;
     unsigned long len = strlen(bufp);
-    request->iov[0].iov_len = len;
-    memcpy(request->iov[0].iov_base, bufp, len);
-    io_uring_prep_writev(sqe, fd, request->iov, request->iovec_count, 0);
+
+    io_uring_prep_send(sqe, fd, bufp, len, 0);
     io_uring_sqe_set_data(sqe, request);
+    io_uring_sqe_set_flags(sqe, 0);
+
+    io_uring_submit(&ring);
+}
+
+static void add_provide_buf(int bid) {
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_provide_buffers(sqe, bufs[bid], MAX_MESSAGE_LEN, 1, group_id, bid);
+    http_request_t *req = malloc(sizeof(http_request_t));
+    req->event_type = 3 ;
+
+    io_uring_sqe_set_data(sqe, req);
     io_uring_submit(&ring);
 }
 
@@ -349,7 +404,8 @@ void handle_request(void *ptr, int n)
             goto close ;
         }
 
-        strncpy(plast, r->iov[0].iov_base, n);
+        strncpy(plast, bufs[r->bid], n);
+        add_provide_buf(r->bid);
 
         r->last += n;
         rc = http_parse_request_line(r);
@@ -390,7 +446,7 @@ void handle_request(void *ptr, int n)
         free(out);
 
         t2 = clock();
-        printf("%lf\n", (t2-t1)/(double)(CLOCKS_PER_SEC));
+        //printf("%lf\n", (t2-t1)/(double)(CLOCKS_PER_SEC));
 
         break;
     }
@@ -398,8 +454,8 @@ void handle_request(void *ptr, int n)
     return ;
 err:
 close:
-    r->event_type = 3;
-    rc = http_close_conn(r);
-    assert(rc == 0 && "do_request: http_close_conn");
+    r->event_type = 4;
+    //rc = http_close_conn(r);
+    //assert(rc == 0 && "do_request: http_close_conn");
 }
 
