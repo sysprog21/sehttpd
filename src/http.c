@@ -20,7 +20,7 @@
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
-#define TIMEOUT_MSEC 400
+#define TIMEOUT_MSEC 3000
 
 #define MAX_CONNECTIONS 1024
 #define MAX_MESSAGE_LEN 8192
@@ -35,7 +35,7 @@ struct io_uring ring;
 
 static void add_read_request(http_request_t *request);
 static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
-static void add_provide_buf(int bid);
+void add_provide_buf(int bid);
 
 static void msec_to_ts(struct __kernel_timespec *ts, unsigned int msec)
 {
@@ -165,6 +165,11 @@ void io_uring_loop() {
                 case 4: {
                     add_provide_buf(req->bid);
                     close(req->fd);
+                    free(req);
+                    break;
+                }
+
+                case 5: {
                     free(req);
                     break;
                 }
@@ -347,21 +352,20 @@ static void add_read_request(http_request_t *request)
     int clientfd = request->fd ;
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     io_uring_prep_recv(sqe, clientfd, NULL, MAX_MESSAGE_LEN, 0);
-    io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
+    io_uring_sqe_set_flags(sqe, (IOSQE_BUFFER_SELECT | IOSQE_IO_LINK) );
     sqe->buf_group = group_id;
 
     request->event_type = 1;
     io_uring_sqe_set_data(sqe, request);
-    /*
+    
     struct __kernel_timespec ts;
-    ts.tv_sec = 4;
-    ts.tv_nsec = 0;
+    msec_to_ts(&ts, TIMEOUT_MSEC);
     sqe = io_uring_get_sqe(&ring);
     io_uring_prep_link_timeout(sqe, &ts, 0);
-    //http_request_t *timeout_req = malloc(sizeof(http_request_t));
-    //timeout_req = 5;
-    //io_uring_sqe_set_data(sqe, timeout_req);
-    */
+    http_request_t *timeout_req = malloc(sizeof(http_request_t));
+    timeout_req->event_type = 5;
+    io_uring_sqe_set_data(sqe, timeout_req);
+    
     io_uring_submit(&ring);
 }
 
@@ -381,7 +385,7 @@ static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r)
     io_uring_submit(&ring);
 }
 
-static void add_provide_buf(int bid) {
+void add_provide_buf(int bid) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
     io_uring_prep_provide_buffers(sqe, bufs[bid], MAX_MESSAGE_LEN, 1, group_id, bid);
     http_request_t *req = malloc(sizeof(http_request_t));
@@ -409,7 +413,8 @@ void handle_request(void *ptr, int n)
 
     else if (n < 0) {
         if (errno != EAGAIN) {
-            log_err("read err, and errno = %d",errno);
+            //log_err("read err, and errno = %d",errno);
+            printf("time out close\n");
             goto err;
         }
         return;
@@ -449,11 +454,12 @@ void handle_request(void *ptr, int n)
         out->status = HTTP_OK;
 
     serve_static(fd, filename, sbuf.st_size, out, r);
-
+    /*
     if(!out->keep_alive) {
         free(out);
         goto close;
     }
+    */
     free(out);
 
     t2 = clock();

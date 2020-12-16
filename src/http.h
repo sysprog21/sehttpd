@@ -52,7 +52,8 @@ typedef struct {
     int bid ;    
     int event_type ;
     int iovec_count ;
-    struct iovec iov[];
+    void *ptr ;
+    //struct iovec iov[];
 } http_request_t;
 
 typedef struct {
@@ -99,6 +100,7 @@ static inline void init_http_request(http_request_t *r,
 void do_request(void *infd);
 void handle_request(void *ptr, int n);
 void add_accept_request(int sockfd);
+void add_provide_buf(int bid);
 //void add_read_request(http_request_t *req);
 //void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
 
