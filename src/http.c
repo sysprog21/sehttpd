@@ -14,15 +14,14 @@
 
 #include "http.h"
 #include "logger.h"
-#include "timer.h"
 
 #define Queue_Depth 2048
 #define MAXLINE 8192
 #define SHORTLINE 512
 #define WEBROOT "./www"
-#define TIMEOUT_MSEC 3000
+#define TIMEOUT_MSEC 500
 
-#define MAX_CONNECTIONS 1024
+#define MAX_CONNECTIONS 2048
 #define MAX_MESSAGE_LEN 8192
 char bufs[MAX_CONNECTIONS][MAX_MESSAGE_LEN] = {0};
 int group_id = 8888;
@@ -137,42 +136,28 @@ void io_uring_loop() {
                 
                     http_request_t *request = malloc(sizeof(http_request_t) );
                     init_http_request(request, fd, WEBROOT);
-
-                    add_timer(request, TIMEOUT_DEFAULT, http_close_conn);
                     add_read_request(request);
                     free(req);
                     break ;
                 }
-
                 case 1: {
-                    int read_len = cqe->res;
                     req->bid = ( cqe->flags >> IORING_CQE_BUFFER_SHIFT );
-                    handle_request(req, read_len);
+                    handle_request(req, cqe->res);
                     break ;
                 }
-
                 case 2: {
                     add_provide_buf(req->bid);
                     add_read_request(req);
                     break ;
                 }
-
                 case 3: {
                     free(req);
                     break;
                 }
-
                 case 4: {
-                    add_provide_buf(req->bid);
-                    close(req->fd);
                     free(req);
                     break;
-                }
-
-                case 5: {
-                    free(req);
-                    break;
-                }
+               }
             }
         }
         io_uring_cq_advance(&ring, count);        
@@ -290,7 +275,7 @@ static void serve_static(int fd,
     if (out->keep_alive) {
         sprintf(header, "%sConnection: keep-alive\r\n", header);
         sprintf(header, "%sKeep-Alive: timeout=%d\r\n", header,
-                TIMEOUT_DEFAULT);
+                TIMEOUT_MSEC);
     }
 
     if (out->modified) {
@@ -363,7 +348,7 @@ static void add_read_request(http_request_t *request)
     sqe = io_uring_get_sqe(&ring);
     io_uring_prep_link_timeout(sqe, &ts, 0);
     http_request_t *timeout_req = malloc(sizeof(http_request_t));
-    timeout_req->event_type = 5;
+    timeout_req->event_type = 4;
     io_uring_sqe_set_data(sqe, timeout_req);
     
     io_uring_submit(&ring);
@@ -404,8 +389,6 @@ void handle_request(void *ptr, int n)
     webroot = r->root;
 
     clock_t t1, t2;
-
-    del_timer(r);
     
     t1 = clock();
     if (n==0)
@@ -454,17 +437,11 @@ void handle_request(void *ptr, int n)
         out->status = HTTP_OK;
 
     serve_static(fd, filename, sbuf.st_size, out, r);
-    /*
-    if(!out->keep_alive) {
-        free(out);
-        goto close;
-    }
-    */
+   
     free(out);
 
     t2 = clock();
     //printf("%lf\n", (t2-t1)/(double)(CLOCKS_PER_SEC);
-    add_timer(r, TIMEOUT_DEFAULT, http_close_conn);
     return ;
 err:
 close:
