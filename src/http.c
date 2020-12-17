@@ -128,9 +128,7 @@ void io_uring_loop() {
 
             else if ( type == read ) {
                 int len = cqe->res ;
-                if(len <= 0)
-                {
-                    //printf("prep close conn\n");
+                if(len <= 0) {                    
                     http_close_conn(req);
                 }
                 else {
