@@ -12,12 +12,8 @@
 
 #include "http.h"
 #include "logger.h"
-#include "timer.h"
 
-/* the length of the struct epoll_events array pointed to by *events */
-#define MAXEVENTS 1024
 #define LISTENQ 1024
-#define Queue_Depth 512
 #define PORT 8081
 #define WEBROOT "./www"
 
@@ -51,35 +47,13 @@ static int open_listenfd(int port)
     return listenfd;
 }
 
-/* set a socket non-blocking. If a listen socket is a blocking socket, after
- * it comes out from epoll and accepts the last connection, the next accpet
- * will block unexpectedly.
- */
-static int sock_set_non_blocking(int fd)
-{
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags == -1) {
-        log_err("fcntl");
-        return -1;
-    }
-
-    flags |= O_NONBLOCK;
-    int s = fcntl(fd, F_SETFL, flags);
-    if (s == -1) {
-        log_err("fcntl");
-        return -1;
-    }
-    return 0;
-}
-
 /* TODO: use command line options to specify */
 int main()
 {
     int listenfd = open_listenfd(PORT);
     assert(listen >= 0 && "open_listenfd");
 
-    init_ring();   
-    timer_init();
+    init_ring();
     add_accept_request(listenfd);
     
     io_uring_loop();

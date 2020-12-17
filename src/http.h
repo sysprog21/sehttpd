@@ -32,7 +32,7 @@ enum http_status {
 typedef struct {
     void *root;
     int fd;
-    int epfd;
+    //int epfd;
     //char buf[MAX_BUF]; /* ring buffer */
     char *buf;
     size_t pos, last;
@@ -51,9 +51,6 @@ typedef struct {
 
     int bid ;    
     int event_type ;
-    int iovec_count ;
-    void *ptr ;
-    //struct iovec iov[];
 } http_request_t;
 
 typedef struct {
@@ -97,13 +94,8 @@ static inline void init_http_request(http_request_t *r,
 }
 
 /* TODO: public functions should have conventions to prefix http_ */
-void do_request(void *infd);
 void handle_request(void *ptr, int n);
 void add_accept_request(int sockfd);
-void add_provide_buf(int bid);
-//void add_read_request(http_request_t *req);
-//void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
-
 void init_ring();
 void io_uring_loop();
 

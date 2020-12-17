@@ -21,8 +21,14 @@
 #define WEBROOT "./www"
 #define TIMEOUT_MSEC 500
 
+#define accept 0
+#define read 1
+#define write 2
+#define prov_buf 3
+#define uring_timer 4
+
 #define MAX_CONNECTIONS 2048
-#define MAX_MESSAGE_LEN 8192
+#define MAX_MESSAGE_LEN 2048
 char bufs[MAX_CONNECTIONS][MAX_MESSAGE_LEN] = {0};
 int group_id = 8888;
 
@@ -34,32 +40,12 @@ struct io_uring ring;
 
 static void add_read_request(http_request_t *request);
 static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r);
-void add_provide_buf(int bid);
+static void add_provide_buf(int bid);
 
 static void msec_to_ts(struct __kernel_timespec *ts, unsigned int msec)
 {
 	ts->tv_sec = msec / 1000;
 	ts->tv_nsec = (msec % 1000) * 1000000;
-}
-
-static ssize_t writen(int fd, void *usrbuf, size_t n)
-{
-    ssize_t nwritten;
-    char *bufp = usrbuf;
-
-    for (size_t nleft = n; nleft > 0; nleft -= nwritten) {
-        if ((nwritten = write(fd, bufp, nleft)) <= 0) {
-            if (errno == EINTR) /* interrupted by sig handler return */
-                nwritten = 0;   /* and call write() again */
-            else {
-                log_err("errno == %d\n", errno);
-                return -1; /* errrno set by write() */
-            }
-        }
-        bufp += nwritten;
-    }
-
-    return n;
 }
 
 static char *webroot = NULL;
@@ -118,7 +104,6 @@ void init_ring()
 
 void io_uring_loop() {
     printf("server start : \n");
-
     while(1)
     {
         struct io_uring_cqe *cqe ;
@@ -128,36 +113,52 @@ void io_uring_loop() {
         io_uring_for_each_cqe(&ring, head, cqe){
             ++count;
             http_request_t *req = io_uring_cqe_get_data(cqe);
-            //printf("event_type = %d\n",req->event_type);
-            switch(req->event_type) {
-                case 0: {
-                    int fd = cqe->res;
-                    add_accept_request(req->fd);
+            int type = req->event_type ;
+            //printf("event type = %d\n",type);
+
+            if ( type == accept ) {
+                int fd = cqe->res;
+                add_accept_request(req->fd);
                 
-                    http_request_t *request = malloc(sizeof(http_request_t) );
-                    init_http_request(request, fd, WEBROOT);
-                    add_read_request(request);
-                    free(req);
-                    break ;
+                http_request_t *request = malloc(sizeof(http_request_t) );
+                init_http_request(request, fd, WEBROOT);
+                add_read_request(request);
+                free(req);
+            }
+
+            else if ( type == read ) {
+                int len = cqe->res ;
+                if(len <= 0)
+                {
+                    //printf("prep close conn\n");
+                    http_close_conn(req);
                 }
-                case 1: {
+                else {
                     req->bid = ( cqe->flags >> IORING_CQE_BUFFER_SHIFT );
-                    handle_request(req, cqe->res);
-                    break ;
+                    int len = cqe->res;
+                    handle_request(req, len);
                 }
-                case 2: {
-                    add_provide_buf(req->bid);
+            }
+
+            else if ( type == write ) {
+                add_provide_buf(req->bid);
+                int len = cqe->res ;
+                if(len <= 0)
+                {
+                    printf("write err close conn\n");
+                    http_close_conn(req);
+                }
+                else
                     add_read_request(req);
-                    break ;
-                }
-                case 3: {
-                    free(req);
-                    break;
-                }
-                case 4: {
-                    free(req);
-                    break;
-               }
+            }
+
+            else if ( type == prov_buf ) {
+                assert( req->res < 0 && "Provide buffer error" );
+                free(req);
+            }
+
+            else if ( type == uring_timer ) {
+                free(req);
             }
         }
         io_uring_cq_advance(&ring, count);        
@@ -209,7 +210,8 @@ static void do_error(int fd,
                      char *cause,
                      char *errnum,
                      char *shortmsg,
-                     char *longmsg)
+                     char *longmsg,
+                     http_request_t *r)
 {
     char header[MAXLINE], body[MAXLINE];
 
@@ -227,8 +229,8 @@ static void do_error(int fd,
             "Content-length: %d\r\n\r\n",
             errnum, shortmsg, (int) strlen(body));
 
-    writen(fd, header, strlen(header));
-    writen(fd, body, strlen(body));
+    add_write_request(fd, header, strlen(header), r);
+    add_write_request(fd, body, strlen(body), r);
 }
 
 static const char *get_file_type(const char *type)
@@ -323,7 +325,7 @@ void add_accept_request(int sockfd)
     io_uring_prep_accept(sqe, sockfd, (struct sockaddr*)&client_addr, &client_addr_len, 0);
 
     http_request_t *request = malloc(sizeof(http_request_t));
-    request->event_type = 0 ;
+    request->event_type = accept ;
     request->fd = sockfd ;
 
     io_uring_sqe_set_data(sqe, request);
@@ -340,7 +342,7 @@ static void add_read_request(http_request_t *request)
     io_uring_sqe_set_flags(sqe, (IOSQE_BUFFER_SELECT | IOSQE_IO_LINK) );
     sqe->buf_group = group_id;
 
-    request->event_type = 1;
+    request->event_type = read ;
     io_uring_sqe_set_data(sqe, request);
     
     struct __kernel_timespec ts;
@@ -348,7 +350,7 @@ static void add_read_request(http_request_t *request)
     sqe = io_uring_get_sqe(&ring);
     io_uring_prep_link_timeout(sqe, &ts, 0);
     http_request_t *timeout_req = malloc(sizeof(http_request_t));
-    timeout_req->event_type = 4;
+    timeout_req->event_type = uring_timer ;
     io_uring_sqe_set_data(sqe, timeout_req);
     
     io_uring_submit(&ring);
@@ -360,21 +362,29 @@ static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r)
 
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     http_request_t *request = r;
-    request->event_type = 2;
+    request->event_type = write ;
     unsigned long len = strlen(bufp);
 
     io_uring_prep_send(sqe, fd, bufp, len, 0);
+    io_uring_sqe_set_flags(sqe, IOSQE_IO_LINK);
     io_uring_sqe_set_data(sqe, request);
-    io_uring_sqe_set_flags(sqe, 0);
+
+    struct __kernel_timespec ts;
+    msec_to_ts(&ts, 1000);
+    sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_link_timeout(sqe, &ts, 0);
+    http_request_t *timeout_req = malloc(sizeof(http_request_t));
+    timeout_req->event_type = uring_timer ;
+    io_uring_sqe_set_data(sqe, timeout_req);
 
     io_uring_submit(&ring);
 }
 
-void add_provide_buf(int bid) {
+static void add_provide_buf(int bid) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
     io_uring_prep_provide_buffers(sqe, bufs[bid], MAX_MESSAGE_LEN, 1, group_id, bid);
     http_request_t *req = malloc(sizeof(http_request_t));
-    req->event_type = 3 ;
+    req->event_type = prov_buf ;
 
     io_uring_sqe_set_data(sqe, req);
     io_uring_submit(&ring);
@@ -391,17 +401,6 @@ void handle_request(void *ptr, int n)
     clock_t t1, t2;
     
     t1 = clock();
-    if (n==0)
-        goto err;
-
-    else if (n < 0) {
-        if (errno != EAGAIN) {
-            //log_err("read err, and errno = %d",errno);
-            printf("time out close\n");
-            goto err;
-        }
-        return;
-    }
 
     r->buf = &bufs[r->bid];
     r->pos = 0;
@@ -413,20 +412,17 @@ void handle_request(void *ptr, int n)
         (char *) r->uri_start);
 
     rc = http_parse_request_body(r);
-
     http_out_t *out = malloc(sizeof(http_out_t));
-        
     init_http_out(out, fd);
-
     parse_uri(r->uri_start, r->uri_end - r->uri_start, filename);
         
     struct stat sbuf;
     if (stat(filename, &sbuf) < 0) {
-        do_error(fd, filename, "404", "Not Found", "Can't find the file");
+        do_error(fd, filename, "404", "Not Found", "Can't find the file", r);
         return;
     }
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
-        do_error(fd, filename, "403", "Forbidden", "Can't read the file");
+        do_error(fd, filename, "403", "Forbidden", "Can't read the file", r);
         return;
     }
 
@@ -436,16 +432,11 @@ void handle_request(void *ptr, int n)
     if (!out->status) 
         out->status = HTTP_OK;
 
-    serve_static(fd, filename, sbuf.st_size, out, r);
-   
+    serve_static(fd, filename, sbuf.st_size, out, r); 
     free(out);
 
     t2 = clock();
     //printf("%lf\n", (t2-t1)/(double)(CLOCKS_PER_SEC);
     return ;
-err:
-close:
-    rc = http_close_conn(r);
-    assert(rc == 0 && "do_request: http_close_conn");
 }
 

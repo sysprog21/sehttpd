@@ -18,8 +18,6 @@ int http_close_conn(http_request_t *r)
      * underlying open file description have been closed (or before if the
      * descriptor is explicitly removed using epoll_ctl(2) EPOLL_CTL_DEL).
      */
-    //r->event_type = 4;
-    add_provide_buf(r->bid);
     close(r->fd);
     free(r);
 
