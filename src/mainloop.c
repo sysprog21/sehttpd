@@ -54,7 +54,8 @@ int main()
     assert(listen >= 0 && "open_listenfd");
 
     init_ring();
-    add_accept_request(listenfd);
+    http_request_t *req = malloc(sizeof(http_request_t));
+    add_accept_request(listenfd, req);
     
     io_uring_loop();
     return 0;

@@ -28,7 +28,7 @@
 #define uring_timer 4
 
 #define MAX_CONNECTIONS 2048
-#define MAX_MESSAGE_LEN 2048
+#define MAX_MESSAGE_LEN 8192
 char bufs[MAX_CONNECTIONS][MAX_MESSAGE_LEN] = {0};
 int group_id = 8888;
 
@@ -117,13 +117,14 @@ void io_uring_loop() {
             //printf("event type = %d\n",type);
 
             if ( type == accept ) {
+                add_accept_request(req->fd, req);
+
                 int fd = cqe->res;
-                add_accept_request(req->fd);
-                
                 http_request_t *request = malloc(sizeof(http_request_t) );
+                assert(request && "request memory malloc fault");
+
                 init_http_request(request, fd, WEBROOT);
                 add_read_request(request);
-                free(req);
             }
 
             else if ( type == read ) {
@@ -141,8 +142,7 @@ void io_uring_loop() {
             else if ( type == write ) {
                 add_provide_buf(req->bid);
                 int len = cqe->res ;
-                if(len <= 0)
-                {
+                if(len <= 0) {
                     printf("write err close conn\n");
                     http_close_conn(req);
                 }
@@ -314,7 +314,7 @@ static inline int init_http_out(http_out_t *o, int fd)
     return 0;
 }
 
-void add_accept_request(int sockfd)
+void add_accept_request(int sockfd, http_request_t *request)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring) ;
     struct sockaddr_in client_addr;
@@ -322,7 +322,6 @@ void add_accept_request(int sockfd)
 
     io_uring_prep_accept(sqe, sockfd, (struct sockaddr*)&client_addr, &client_addr_len, 0);
 
-    http_request_t *request = malloc(sizeof(http_request_t));
     request->event_type = accept ;
     request->fd = sockfd ;
 
@@ -348,6 +347,7 @@ static void add_read_request(http_request_t *request)
     sqe = io_uring_get_sqe(&ring);
     io_uring_prep_link_timeout(sqe, &ts, 0);
     http_request_t *timeout_req = malloc(sizeof(http_request_t));
+    assert(timeout_req && "malloc fault");
     timeout_req->event_type = uring_timer ;
     io_uring_sqe_set_data(sqe, timeout_req);
     
@@ -372,6 +372,7 @@ static void add_write_request(int fd, void *usrbuf, size_t n, http_request_t *r)
     sqe = io_uring_get_sqe(&ring);
     io_uring_prep_link_timeout(sqe, &ts, 0);
     http_request_t *timeout_req = malloc(sizeof(http_request_t));
+    assert(timeout_req && "malloc fault");
     timeout_req->event_type = uring_timer ;
     io_uring_sqe_set_data(sqe, timeout_req);
 
@@ -382,6 +383,7 @@ static void add_provide_buf(int bid) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
     io_uring_prep_provide_buffers(sqe, bufs[bid], MAX_MESSAGE_LEN, 1, group_id, bid);
     http_request_t *req = malloc(sizeof(http_request_t));
+    assert(req && "malloc fault");
     req->event_type = prov_buf ;
 
     io_uring_sqe_set_data(sqe, req);
@@ -396,9 +398,9 @@ void handle_request(void *ptr, int n)
     char filename[SHORTLINE];
     webroot = r->root;
 
-    clock_t t1, t2;
+    //clock_t t1, t2;
     
-    t1 = clock();
+    //t1 = clock();
 
     r->buf = &bufs[r->bid];
     r->pos = 0;
@@ -433,7 +435,7 @@ void handle_request(void *ptr, int n)
     serve_static(fd, filename, sbuf.st_size, out, r); 
     free(out);
 
-    t2 = clock();
+    //t2 = clock();
     //printf("%lf\n", (t2-t1)/(double)(CLOCKS_PER_SEC);
     return ;
 }
