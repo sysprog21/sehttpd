@@ -50,13 +50,20 @@ static int open_listenfd(int port)
 /* TODO: use command line options to specify */
 int main()
 {
+    
+    signal(SIGINT, sigint_handler);
+
     int listenfd = open_listenfd(PORT);
     assert(listen >= 0 && "open_listenfd");
 
     init_ring();
-    http_request_t *req = malloc(sizeof(http_request_t));
-    add_accept_request(listenfd, req);
+    int ret = init_memorypool();
+    assert(ret == 0 && "memory pool calloc");
+
+    http_request_t *req = get_request();
     
+    add_accept_request(listenfd, req);    
     io_uring_loop();
+    
     return 0;
 }
