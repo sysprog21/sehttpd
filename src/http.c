@@ -3,7 +3,6 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -35,8 +34,8 @@ int group_id = 8888;
 
 struct io_uring ring;
 
-#define BitmapSize 512
-#define PoolLength 1024
+#define PoolLength Queue_Depth
+#define BitmapSize PoolLength/32
 uint32_t bitmap[BitmapSize];
 http_request_t *pool_ptr;
 
@@ -79,7 +78,9 @@ http_request_t *get_request() {
 
     for (int i = 0 ; i < BitmapSize ; i++) {
         bitset = bitmap[i];
-
+        if(!(bitset ^ 0xffffffff))
+            continue;
+        
         for(int k = 0 ; k < 32 ; k++) {      
             if (!((bitset >> k) & 0x1)) {
                 bitmap[i] ^= (0x1 << k);
@@ -166,17 +167,16 @@ void io_uring_loop() {
             http_request_t *req = io_uring_cqe_get_data(cqe);
             int type = req->event_type ;
             printf("event type = %d\n",type);
-
             if ( type == accept ) {
                 add_accept_request(req->fd, req);
-                
-                int fd = cqe->res;
-                if (fd >= 0) {
-                    http_request_t *request = get_request();
-                    assert(request && "request memory malloc fault");
-
-                    init_http_request(request, fd, WEBROOT);
-                    add_read_request(request);
+                if (&(cqe->res)) {
+                    int fd = cqe->res;
+                    if (fd >= 0) {
+                        http_request_t *request = get_request();
+                        assert(request && "request memory malloc fault");
+                        init_http_request(request, fd, WEBROOT);
+                        add_read_request(request);
+                    }
                 }
             }
 
@@ -212,7 +212,7 @@ void io_uring_loop() {
                 free_request(req);
             }
         }
-        io_uring_cq_advance(&ring, count);        
+        io_uring_cq_advance(&ring, count);
     }
 }
 
@@ -380,6 +380,7 @@ void add_accept_request(int sockfd, http_request_t *request)
 
     io_uring_sqe_set_data(sqe, request);
     io_uring_sqe_set_flags(sqe, 0);
+
     io_uring_submit(&ring);
 }
 
@@ -394,7 +395,7 @@ static void add_read_request(http_request_t *request)
 
     request->event_type = read ;
     io_uring_sqe_set_data(sqe, request);
-    
+
     struct __kernel_timespec ts;
     msec_to_ts(&ts, TIMEOUT_MSEC);
     sqe = io_uring_get_sqe(&ring);
@@ -440,6 +441,7 @@ static void add_provide_buf(int bid) {
     req->event_type = prov_buf ;
 
     io_uring_sqe_set_data(sqe, req);
+
     io_uring_submit(&ring);
 }
 
@@ -452,7 +454,6 @@ void handle_request(void *ptr, int n)
     webroot = r->root;
 
     //clock_t t1, t2;
-    
     //t1 = clock();
 
     r->buf = &bufs[r->bid];
