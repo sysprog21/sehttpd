@@ -120,7 +120,7 @@ int main()
             http_request_t *r = events[i].data.ptr;
             int fd = r->fd;
             if (listenfd == fd) {
-                /* we hava one or more incoming connections */
+                /* we have one or more incoming connections */
                 while (1) {
                     socklen_t inlen = 1;
                     struct sockaddr_in clientaddr;
