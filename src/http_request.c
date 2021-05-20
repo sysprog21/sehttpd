@@ -67,8 +67,8 @@ static http_header_handle_t http_headers_in[] = {
 
 void http_handle_header(http_request_t *r, http_out_t *o)
 {
-    list_head *pos;
-    list_for_each (pos, &(r->list)) {
+    list_head *pos, *n;
+    list_for_each_safe (pos, n, &(r->list)) {
         http_header_t *header = list_entry(pos, http_header_t, list);
         for (http_header_handle_t *header_in = http_headers_in;
              strlen(header_in->name) > 0; header_in++) {
