@@ -31,8 +31,17 @@ Building `seHTTPd` is straightforward.
 $ make
 ```
 
-By default the server accepts connections on port 8081, if you want to assign
-other port for the server, modify file `src/mainloop.c` and build again.
+### Default server 
+```shell
+./sehttpd
+```
+
+### Specify the port
+```shell
+./sehttpd -p 8082 
+```
+
+Specify the port number with `-p` flag, by default the server accepts connections on port 8081.
 
 ## License
 `seHTTPd` is released under the MIT License. Use of this source code is governed
