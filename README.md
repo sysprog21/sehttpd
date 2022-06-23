@@ -43,6 +43,13 @@ $ make
 
 Specify the port number with `-p` flag, by default the server accepts connections on port 8081.
 
+### Specify the web root
+```shell
+./sehttpd -w ./www
+```
+
+Specify the web root with `-w` flag, by default the web root is "./www".
+
 ## License
 `seHTTPd` is released under the MIT License. Use of this source code is governed
 by a MIT License that can be found in the LICENSE file.
