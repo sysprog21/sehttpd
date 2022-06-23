@@ -1,6 +1,9 @@
 #include <arpa/inet.h>
 #include <assert.h>
+#include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +18,6 @@
 
 /* the length of the struct epoll_events array pointed to by *events */
 #define MAXEVENTS 1024
-
 #define LISTENQ 1024
 
 static int open_listenfd(int port)
@@ -69,12 +71,63 @@ static int sock_set_non_blocking(int fd)
     return 0;
 }
 
-/* TODO: use command line options to specify */
-#define PORT 8081
 #define WEBROOT "./www"
+#define DEFAULT_PORT 8081
 
-int main()
+static int cmd_get_port(char *arg_port)
 {
+    long ret;
+    char *endptr;
+
+    ret = strtol(arg_port, &endptr, 10);
+    if ((errno == ERANGE && (ret == LONG_MAX || ret == LONG_MIN)) ||
+        (errno != 0 && ret == 0)) {
+        fprintf(stderr, "Failed to parse port number: %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    if (endptr == arg_port) {
+        fprintf(stderr, "No digits were found\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* strtol successfully parse arg_port, and check boundary condition */
+    if (ret <= 0 || ret > 65535) {
+        ret = DEFAULT_PORT;
+    }
+    return ret;
+}
+
+struct runtime_conf {
+    int port;
+};
+
+static struct runtime_conf *parse_cmd(int argc, char **argv)
+{
+    int cmdopt = 0;
+    struct runtime_conf *cfg = malloc(sizeof(struct runtime_conf));
+
+    while ((cmdopt = getopt(argc, argv, "p:r:")) != -1) {
+        switch (cmdopt) {
+        case 'p':
+            cfg->port = cmd_get_port(optarg);
+            break;
+        case '?':
+            fprintf(stderr, "Illeggal option: -%c\n",
+                    isprint(optopt) ? optopt : '#');
+            exit(EXIT_FAILURE);
+            break;
+        default:
+            fprintf(stderr, "Not supported option\n");
+            break;
+        }
+    }
+    return cfg;
+}
+
+int main(int argc, char **argv)
+{
+    struct runtime_conf *cfg = parse_cmd(argc, argv);
     /* when a fd is closed by remote, writing to this fd will cause system
      * send SIGPIPE to this process, which exit the program
      */
@@ -85,7 +138,7 @@ int main()
         return 0;
     }
 
-    int listenfd = open_listenfd(PORT);
+    int listenfd = open_listenfd(cfg->port);
     int rc UNUSED = sock_set_non_blocking(listenfd);
     assert(rc == 0 && "sock_set_non_blocking");
 
@@ -165,5 +218,6 @@ int main()
         }
     }
 
+    free(cfg);
     return 0;
 }
