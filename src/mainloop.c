@@ -71,8 +71,8 @@ static int sock_set_non_blocking(int fd)
     return 0;
 }
 
-#define WEBROOT "./www"
 #define DEFAULT_PORT 8081
+#define DEFAULT_WEBROOT "./www"
 
 static int cmd_get_port(char *arg_port)
 {
@@ -100,6 +100,7 @@ static int cmd_get_port(char *arg_port)
 
 struct runtime_conf {
     int port;
+    char *web_root;
 };
 
 static struct runtime_conf *parse_cmd(int argc, char **argv)
@@ -112,6 +113,9 @@ static struct runtime_conf *parse_cmd(int argc, char **argv)
         case 'p':
             cfg->port = cmd_get_port(optarg);
             break;
+        case 'w':
+            cfg->web_root = optarg;
+            break;
         case '?':
             fprintf(stderr, "Illeggal option: -%c\n",
                     isprint(optopt) ? optopt : '#');
@@ -122,6 +126,9 @@ static struct runtime_conf *parse_cmd(int argc, char **argv)
             break;
         }
     }
+
+    if (!cfg->web_root)
+        cfg->web_root = DEFAULT_WEBROOT;
     return cfg;
 }
 
@@ -150,7 +157,7 @@ int main(int argc, char **argv)
     assert(events && "epoll_event: malloc");
 
     http_request_t *request = malloc(sizeof(http_request_t));
-    init_http_request(request, listenfd, epfd, WEBROOT);
+    init_http_request(request, listenfd, epfd, cfg->web_root);
 
     struct epoll_event event = {
         .data.ptr = request,
@@ -197,7 +204,7 @@ int main(int argc, char **argv)
                         break;
                     }
 
-                    init_http_request(request, infd, epfd, WEBROOT);
+                    init_http_request(request, infd, epfd, cfg->web_root);
                     event.data.ptr = request;
                     event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
                     epoll_ctl(epfd, EPOLL_CTL_ADD, infd, &event);
