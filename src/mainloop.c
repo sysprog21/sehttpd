@@ -108,6 +108,9 @@ static struct runtime_conf *parse_cmd(int argc, char **argv)
     int cmdopt = 0;
     struct runtime_conf *cfg = malloc(sizeof(struct runtime_conf));
 
+    cfg->port = DEFAULT_PORT;
+    cfg->web_root = DEFAULT_WEBROOT;
+
     while ((cmdopt = getopt(argc, argv, "p:r:")) != -1) {
         switch (cmdopt) {
         case 'p':
@@ -117,7 +120,7 @@ static struct runtime_conf *parse_cmd(int argc, char **argv)
             cfg->web_root = optarg;
             break;
         case '?':
-            fprintf(stderr, "Illeggal option: -%c\n",
+            fprintf(stderr, "Illegal option: -%c\n",
                     isprint(optopt) ? optopt : '#');
             exit(EXIT_FAILURE);
             break;
@@ -127,8 +130,6 @@ static struct runtime_conf *parse_cmd(int argc, char **argv)
         }
     }
 
-    if (!cfg->web_root)
-        cfg->web_root = DEFAULT_WEBROOT;
     return cfg;
 }
 
@@ -141,7 +142,7 @@ int main(int argc, char **argv)
     if (sigaction(SIGPIPE,
                   &(struct sigaction){.sa_handler = SIG_IGN, .sa_flags = 0},
                   NULL)) {
-        log_err("Failed to install sigal handler for SIGPIPE");
+        log_err("Failed to install signal handler for SIGPIPE");
         return 0;
     }
 
