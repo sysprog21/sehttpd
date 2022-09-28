@@ -54,7 +54,7 @@ int http_filter(struct __sk_buff *skb)
      */
     tcp_header_length = tcp->offset << 2;  // SHL 2 -> *4 multiply
 
-    /* calculate patload offset and length */
+    /* calculate payload offset and length */
     payload_offset = ETH_HLEN + ip_header_length + tcp_header_length;
     payload_length = ip->tlen - ip_header_length - tcp_header_length;
 
@@ -98,7 +98,7 @@ int http_filter(struct __sk_buff *skb)
     /* no HTTP match */
     goto DROP;
 
-/* keep the packet and send it to userspace retruning -1 */
+/* keep the packet and send it to userspace returning -1 */
 KEEP:
     return -1;
 
