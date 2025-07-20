@@ -157,31 +157,30 @@ static void serve_static(int fd,
                          http_out_t *out)
 {
     char header[MAXLINE];
-
+    int offset = 0;
     const char *dot_pos = strrchr(filename, '.');
     const char *file_type = get_file_type(dot_pos);
 
-    sprintf(header, "HTTP/1.1 %d %s\r\n", out->status,
-            get_msg_from_status(out->status));
+    offset += sprintf(header, "HTTP/1.1 %d %s\r\n", out->status,
+                      get_msg_from_status(out->status));
 
     if (out->keep_alive) {
-        sprintf(header, "%sConnection: keep-alive\r\n", header);
-        sprintf(header, "%sKeep-Alive: timeout=%d\r\n", header,
-                TIMEOUT_DEFAULT);
+        offset += sprintf(header + offset, "Connection: keep-alive\r\n");
+        offset += sprintf(header + offset, "Keep-Alive: timeout=%d\r\n",
+                          TIMEOUT_DEFAULT);
     }
 
     if (out->modified) {
         char buf[SHORTLINE];
-        sprintf(header, "%sContent-type: %s\r\n", header, file_type);
-        sprintf(header, "%sContent-length: %zu\r\n", header, filesize);
+        offset += sprintf(header + offset, "Content-type: %s\r\n", file_type);
+        offset += sprintf(header + offset, "Content-length: %zu\r\n", filesize);
         struct tm tm;
         localtime_r(&(out->mtime), &tm);
         strftime(buf, SHORTLINE, "%a, %d %b %Y %H:%M:%S GMT", &tm);
-        sprintf(header, "%sLast-Modified: %s\r\n", header, buf);
+        offset += sprintf(header + offset, "Last-Modified: %s\r\n", buf);
     }
 
-    sprintf(header, "%sServer: seHTTPd\r\n", header);
-    sprintf(header, "%s\r\n", header);
+    sprintf(header + offset, "Server: seHTTPd\r\n\r\n");
 
     size_t n = (size_t) writen(fd, header, strlen(header));
     assert(n == strlen(header) && "writen error");
